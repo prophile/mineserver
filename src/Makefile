@@ -21,7 +21,7 @@ endif
 
 
 RM = rm -f
-CXX = g++
+CXX = clang++
 CC = $(CXX)
 LDFLAGS = -L/usr/local/lib -L/usr/lib -levent -lz -lnoise $(LFLAGS)
 CXXFLAGS = $(DFLAGS) -I. -I/usr/Local/include -I/usr/include
