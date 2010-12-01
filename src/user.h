@@ -89,12 +89,16 @@ public:
   bool admin;
   bool banned;
   bool whitelist;
+  bool muted;
+	bool dnd;
   sint16 health;
   unsigned int UID;
   std::string nick;
   position pos;
   vec curChunk;
   Inventory inv;
+
+  sint32 attachedTo;
 
   //Input buffer
   Packet buffer;
@@ -118,6 +122,12 @@ public:
 
   // Kick player
   bool kick(std::string kickMsg);
+
+  // Chat blocking
+  bool mute(std::string muteMsg);
+  bool unmute();
+	bool toggleDND();
+	bool isAbleToCommunicate(std::string communicateCommand);
 
   //Map related
 

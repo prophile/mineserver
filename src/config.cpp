@@ -39,10 +39,16 @@
 
 #include "config.h"
 
-Conf &Conf::get()
+
+Conf* Conf::mConf;
+
+void Conf::free()
 {
-  static Conf instance;
-  return instance;
+   if (mConf)
+   {
+      delete mConf;
+      mConf = 0;
+   }
 }
 
 // Load/reload configuration
@@ -55,15 +61,30 @@ bool Conf::load(std::string configFile)
   if(ifs.fail() && configFile == CONFIG_FILE)
   {
     // TODO: Load default configuration from the internets!
-    std::cout << ">>> " << configFile << " not found." << std::endl;
+    std::cout << "Warning: " << configFile << " not found! Generating it now." << std::endl;
 
+    // Open config file
     std::ofstream confofs(configFile.c_str());
-    confofs << "#"                                                  << std::endl<<
-               "# Load configuration example from: <address here>"  << std::endl<<
-               "#"                                                  << std::endl;
+
+    // Write header
+    confofs << "# This is the default config, please see http://mineserver.be/wiki/Configuration for more information." << std::endl << std::endl;
+
+    // Write all the default settings
+    std::map<std::string, std::string>::iterator iter;
+    for(iter=defaultConf.begin();iter!=defaultConf.end();++iter)
+      confofs << iter->first << " = " << iter->second << std::endl;
+
+    // Close the config file
     confofs.close();
 
     this->load(CONFIG_FILE);
+  }
+
+  if (ifs.fail())
+  {
+    std::cout << "Warning: " << configFile << " not found!" << std::endl;
+    ifs.close();
+    return true;
   }
 
   std::string temp;
@@ -133,6 +154,13 @@ bool Conf::load(std::string configFile)
     }
     else
       text = line[1];
+
+    if (line[0] == "include")
+    {
+      std::cout << "Including config file " << text << std::endl;
+      load(text);
+      continue;
+    }
 
     // Update existing configuration and add new lines
     if(confSet.find(line[0]) != confSet.end())

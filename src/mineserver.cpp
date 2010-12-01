@@ -29,20 +29,22 @@
 #ifdef WIN32
   #include <conio.h>
   #include <winsock2.h>
+  #include <process.h>
 #else
   #include <sys/socket.h>
   #include <netinet/in.h>
   #include <arpa/inet.h>
   #include <string.h>
   #include <netdb.h>
+  #include <unistd.h>
 #endif
-
 #include <sys/types.h>
 #include <fcntl.h>
 #include <cassert>
 #include <deque>
 #include <map>
 #include <iostream>
+#include <fstream>
 #include <event.h>
 #include <ctime>
 #include <vector>
@@ -51,9 +53,7 @@
 
 #include "constants.h"
 #include "mineserver.h"
-
 #include "logger.h"
-
 #include "sockets.h"
 #include "tools.h"
 #include "map.h"
@@ -64,6 +64,7 @@
 #include "nbt.h"
 #include "packets.h"
 #include "physics.h"
+#include "plugin.h"
 
 #ifdef WIN32
 static bool quit = false;
@@ -96,6 +97,8 @@ int main(int argc, char *argv[])
   signal(SIGTERM, sighandler);
   signal(SIGINT, sighandler);
 
+  srand(time(NULL));
+
   return Mineserver::Get().Run(argc, argv);
 }
 
@@ -117,46 +120,56 @@ int Mineserver::Run(int argc, char *argv[])
 
   std::string file_config;
   file_config.assign(CONFIG_FILE);
-  std::string file_admin;
-  file_admin.assign(ADMIN_FILE);
-  std::string file_items;
-  file_items.assign(ITEMS_FILE);
-  std::string file_motd;
-  file_motd.assign(MOTD_FILE);
-  std::string file_rules;
-  file_rules.assign(RULES_FILE);
 
   if (argc > 1)
     file_config.assign(argv[1]);
 
   // Initialize conf
-  Conf::get().load(file_config);
+  Conf::get()->load(file_config);
 
-  // Load item aliases
-  Conf::get().load(file_items);
+  // Write PID to file
+  std::ofstream pid_out((Conf::get()->sValue("pid_file")).c_str());
+  if (!pid_out.fail())
+#ifdef WIN32
+     pid_out << _getpid();
+#else
+     pid_out << getpid();
+#endif
+  pid_out.close();
 
-  // Load admins
-  Chat::get().loadAdmins(file_admin);
+  // Load admin, banned and whitelisted users
+  Chat::get()->loadAdmins(Conf::get()->sValue("admin_file"));
+  Chat::get()->loadBanned(Conf::get()->sValue("banned_file"));
+  Chat::get()->loadWhitelist(Conf::get()->sValue("whitelist_file"));
   // Load MOTD
-  Chat::get().checkMotd(file_motd);
-
-  Chat::get().loadBanned(BANNEDFILE);
-  Chat::get().loadWhitelist(WHITELISTFILE);
+  Chat::get()->checkMotd(Conf::get()->sValue("motd_file"));
 
   // Set physics enable state according to config
-  Physics::get().enabled = (Conf::get().bValue("liquid_physics"));
+  Physics::get()->enabled = (Conf::get()->bValue("liquid_physics"));
 
   // Initialize map
-  Map::get().initMap();
+  Map::get()->init();
+
+  if (Conf::get()->bValue("map_generate_spawn"))
+  {
+    std::cout << "Generating spawn area...\n";
+    for (int x=0;x<12;x++)
+      for (int z=0;z<12;z++)
+        Map::get()->loadMap(x-6, z-6);
+    std::cout << "Spawn area ready!\n";
+  }
 
   // Initialize packethandler
-  PacketHandler::get().initPackets();
+  PacketHandler::get()->init();
 
   // Load ip from config
-  std::string ip = Conf::get().sValue("ip");
+  std::string ip = Conf::get()->sValue("ip");
 
   // Load port from config
-  int port = Conf::get().iValue("port");
+  int port = Conf::get()->iValue("port");
+  
+  // Initialize plugins
+  Plugin::get()->init();
 
 #ifdef WIN32
   WSADATA wsaData;
@@ -271,28 +284,28 @@ int Mineserver::Run(int argc, char *argv[])
 
         //Send server time
         Packet pkt;
-        pkt << (sint8)PACKET_TIME_UPDATE << (sint64)Map::get().mapTime;
+        pkt << (sint8)PACKET_TIME_UPDATE << (sint64)Map::get()->mapTime;
         Users[0]->sendAll((uint8*)pkt.getWrite(), pkt.getWriteLen());        
       }
 
       //Try to load release time from config
-      int map_release_time = Conf::get().iValue("map_release_time");
+      int map_release_time = Conf::get()->iValue("map_release_time");
 
       //Release chunks not used in <map_release_time> seconds
       std::vector<uint32> toRelease;
-      for(std::map<uint32, int>::const_iterator it = Map::get().mapLastused.begin();
-          it != Map::get().mapLastused.end();
+      for(std::map<uint32, int>::const_iterator it = Map::get()->mapLastused.begin();
+          it != Map::get()->mapLastused.end();
           ++it)
       {
-        if(Map::get().mapLastused[it->first] <= time(0)-map_release_time)
+        if(Map::get()->mapLastused[it->first] <= time(0)-map_release_time)
           toRelease.push_back(it->first);
       }
 
       int x_temp, z_temp;
       for(unsigned i = 0; i < toRelease.size(); i++)
       {
-        Map::get().idToPos(toRelease[i], &x_temp, &z_temp);
-        Map::get().releaseMap(x_temp, z_temp);
+        Map::get()->idToPos(toRelease[i], &x_temp, &z_temp);
+        Map::get()->releaseMap(x_temp, z_temp);
       }
     }
 
@@ -305,24 +318,44 @@ int Mineserver::Run(int argc, char *argv[])
       {
         Users[i]->pushMap();
         Users[i]->popMap();
+
+        //Minecart hacks!!
+        if(Users[i]->attachedTo)
+        {
+          Packet pkt;
+          pkt << PACKET_ENTITY_VELOCITY << (sint32)Users[i]->attachedTo <<  (sint16)10000       << (sint16)0 << (sint16)0;
+          //pkt << PACKET_ENTITY_RELATIVE_MOVE << (sint32)Users[i]->attachedTo <<  (sint8)100       << (sint8)0 << (sint8)0;
+          Users[i]->sendAll((uint8 *)pkt.getWrite(), pkt.getWriteLen());
+        }
       }
-      Map::get().mapTime+=20;
-      if(Map::get().mapTime>=24000) Map::get().mapTime=0;
+      Map::get()->mapTime+=20;
+      if(Map::get()->mapTime>=24000) Map::get()->mapTime=0;
     }
 
     //Physics simulation every 200ms
-    Physics::get().update();
+    Physics::get()->update();
 
     event_base_loopexit(m_eventBase, &loopTime);
   }
 
-  Map::get().freeMap();
-
-  #ifdef WIN32
+#ifdef WIN32
   closesocket(m_socketlisten);
-  #else
-    close(m_socketlisten);
-  #endif
+#else
+  close(m_socketlisten);
+#endif
+  
+  // Remove the PID file
+  unlink((Conf::get()->sValue("pid_file")).c_str());
+
+  /* Free memory */
+  PacketHandler::get()->free();
+  Map::get()->free();
+  Physics::get()->free();
+  Chat::get()->free();
+  Conf::get()->free();
+  Plugin::get()->free();
+  Logger::get()->free();
+  MapGen::get()->free();
 
   return EXIT_SUCCESS;
 }
@@ -332,4 +365,4 @@ bool Mineserver::Stop()
   m_running=false;
 
   return true;
-};
+}

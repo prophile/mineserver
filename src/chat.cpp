@@ -51,10 +51,15 @@
 #include "physics.h"
 
 
-Chat &Chat::get()
+Chat* Chat::mChat;
+
+void Chat::free()
 {
-  static Chat instance;
-  return instance;
+   if (mChat)
+   {
+      delete mChat;
+      mChat = 0;
+   }
 }
 
 Chat::Chat()
@@ -62,12 +67,20 @@ Chat::Chat()
   registerStandardCommands();
 }
 
-void Chat::registerCommand(std::string name, ChatCommand command, bool adminOnly)
+void Chat::registerCommand(std::deque<std::string> words, ChatCommand command, bool adminOnly)
 {
-  if(adminOnly)
-    adminCommands[name] = command;
-  else
-    userCommands[name] = command;
+  // Loop thru all the words for this command
+  std::string currentWord;
+  while(!words.empty())
+  {
+    currentWord = words[0];
+    words.pop_front();
+  
+    if(adminOnly)
+      adminCommands[currentWord] = command;
+    else
+      userCommands[currentWord] = command;
+  }
 }
 
 bool Chat::checkMotd(std::string motdFile)
@@ -140,7 +153,7 @@ bool Chat::loadBanned(std::string bannedFile)
     std::cout << "> Warning: " << bannedFile << " not found. Creating..." << std::endl;
 
     std::ofstream bannedofs(bannedFile.c_str());
-    bannedofs << DEFAULTBANNEDFILE << std::endl;
+    bannedofs << BANNED_CONTENT << std::endl;
     bannedofs.close();
 
     return true;
@@ -174,7 +187,7 @@ bool Chat::loadWhitelist(std::string whitelistFile)
     std::cout << "> Warning: " << whitelistFile << " not found. Creating..." << std::endl;
 
     std::ofstream whitelistofs(whitelistFile.c_str());
-    whitelistofs << DEFAULTWHITELISTFILE << std::endl;
+    whitelistofs << WHITELIST_CONTENT << std::endl;
     whitelistofs.close();
 
     return true;
@@ -196,11 +209,17 @@ bool Chat::loadWhitelist(std::string whitelistFile)
 
 bool Chat::sendUserlist(User *user)
 {
-  this->sendMsg(user, COLOR_BLUE + "[ Players online ]", USER);
+  this->sendMsg(user, COLOR_BLUE + "[ " + dtos(Users.size()) + " players online ]", USER);
 
   for(unsigned int i = 0; i < Users.size(); i++)
   {
-    this->sendMsg(user, "> " + Users[i]->nick, USER);
+	std::string playerDesc = "> " + Users[i]->nick;
+	if(Users[i]->muted)
+		playerDesc += COLOR_YELLOW + " (muted)";
+	if(Users[i]->dnd)
+		playerDesc += COLOR_YELLOW + " (dnd)";
+	
+    this->sendMsg(user, playerDesc, USER);
   }
 
   return true;
@@ -283,14 +302,20 @@ bool Chat::handleMsg(User *user, std::string msg)
   // Normal message
   else
   {
-    if(user->admin)
-      msg = timeStamp + " <"+ COLOR_DARK_MAGENTA + user->nick + COLOR_WHITE + "> " + msg;
-    else
-      msg = timeStamp + " <"+ user->nick + "> " + msg;
-
+		if(user->isAbleToCommunicate("chat") == false) {
+			return true;
+		}
+    else {
+      if(user->admin) 
+        msg = timeStamp + " <"+ COLOR_DARK_MAGENTA + user->nick + COLOR_WHITE + "> " + msg;
+      else 
+        msg = timeStamp + " <"+ user->nick + "> " + msg;
+    }
+      
     LOG(msg);
 
     this->sendMsg(user, msg, ALL);
+    
   }
 
   return true;
@@ -315,7 +340,7 @@ bool Chat::sendMsg(User *user, std::string msg, MessageTarget action)
     break;
 
   case USER:
-    user->buffer.addToWrite(tmpArray, tmpArrayLen);
+   	user->buffer.addToWrite(tmpArray, tmpArrayLen);
     break;
 
   case ADMINS:
