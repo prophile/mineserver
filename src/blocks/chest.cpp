@@ -25,41 +25,56 @@
    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "stair.h"
+#include "chest.h"
+#include <iostream>
+#include "../chat.h"
 
-void BlockStair::onStartedDigging(User* user, sint8 status, sint32 x, sint8 y, sint32 z, sint8 direction)
+void BlockChest::onStartedDigging(User* user, sint8 status, sint32 x, sint8 y, sint32 z, sint8 direction)
+{
+  if(user->currentItem() == ITEM_WOODEN_AXE)
+  {
+    Chat::get()->sendMsg(user, COLOR_DARK_MAGENTA + "LOCKED CHEST", Chat::USER);
+  }
+}
+
+void BlockChest::onDigging(User* user, sint8 status, sint32 x, sint8 y, sint32 z, sint8 direction)
 {
 
 }
 
-void BlockStair::onDigging(User* user, sint8 status, sint32 x, sint8 y, sint32 z, sint8 direction)
+void BlockChest::onStoppedDigging(User* user, sint8 status, sint32 x, sint8 y, sint32 z, sint8 direction)
 {
 
 }
 
-void BlockStair::onStoppedDigging(User* user, sint8 status, sint32 x, sint8 y, sint32 z, sint8 direction)
+void BlockChest::onBroken(User* user, sint8 status, sint32 x, sint8 y, sint32 z, sint8 direction)
+{
+  
+}
+
+void BlockChest::onNeighbourBroken(User* user, sint8 oldblock, sint32 x, sint8 y, sint32 z, sint8 direction)
 {
 
 }
 
-void BlockStair::onBroken(User* user, sint8 status, sint32 x, sint8 y, sint32 z, sint8 direction)
+void BlockChest::onPlace(User* user, sint8 newblock, sint32 x, sint8 y, sint32 z, sint8 direction)
 {
+ 
 }
 
-void BlockStair::onNeighbourBroken(User* user, sint8 oldblock, sint32 x, sint8 y, sint32 z, sint8 direction)
+void BlockChest::onNeighbourPlace(User* user, sint8 newblock, sint32 x, sint8 y, sint32 z, sint8 direction)
 {
-   /* TODO: add code to align stairs? */
+
 }
 
-void BlockStair::onPlace(User* user, sint8 newblock, sint32 x, sint8 y, sint32 z, sint8 direction)
+void BlockChest::onReplace(User* user, sint8 newblock, sint32 x, sint8 y, sint32 z, sint8 direction)
 {
+  
 }
 
-void BlockStair::onNeighbourPlace(User* user, sint8 newblock, sint32 x, sint8 y, sint32 z, sint8 direction)
+void BlockChest::onNeighbourMove(User* user, sint8 oldblock, sint32 x, sint8 y, sint32 z, sint8 direction)
 {
-   /* Align neighbour to this stair */
+  
 }
 
-void BlockStair::onReplace(User* user, sint8 newblock, sint32 x, sint8 y, sint32 z, sint8 direction)
-{
-}
+

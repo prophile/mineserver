@@ -63,12 +63,15 @@
 #include "packets.h"
 #include "physics.h"
 #include "plugin.h"
+#include "furnaceManager.h"
 
 #ifdef WIN32
     #define M_PI 3.141592653589793238462643
 #endif
 #define DEGREES_TO_RADIANS(x) ((x) / 180.0 * M_PI)
 #define RADIANS_TO_DEGREES(x) ((x) / M_PI * 180.0)
+
+//#define _DEBUG
 
 PacketHandler* PacketHandler::mPacketHandler;
 
@@ -149,7 +152,7 @@ int PacketHandler::login_request(User *user)
   }
 
   // If userlimit is reached
-  if((int)Users.size() >= Conf::get()->iValue("user_limit"))
+  if((int)User::all().size() >= Conf::get()->iValue("user_limit"))
   {
     user->kick(Conf::get()->sValue("server_full_message"));
     return PACKET_OK;
@@ -178,7 +181,7 @@ int PacketHandler::login_request(User *user)
   user->loadData();
 
   //Login OK package
-  user->buffer << (sint8)PACKET_LOGIN_RESPONSE 
+  user->buffer << (sint8)PACKET_LOGIN_RESPONSE
     << (sint32)user->UID << std::string("") << std::string("") << (sint64)0 << (sint8)0;
 
   //Send server time (after dawn)
@@ -367,7 +370,7 @@ int PacketHandler::player_inventory(User *user)
       if(!user->buffer)
         return PACKET_NEED_MORE_DATA;
 
-      
+
       slots[i].type   = item_id;
       slots[i].count  = numberOfItems;
       slots[i].health = health;
@@ -412,7 +415,7 @@ int PacketHandler::player_look(User *user)
   sint8 onground;
 
   user->buffer >> yaw >> pitch >> onground;
-  
+
   if(!user->buffer)
     return PACKET_NEED_MORE_DATA;
 
@@ -429,7 +432,7 @@ int PacketHandler::player_position_and_look(User *user)
   float yaw, pitch;
   sint8 onground;
 
-  user->buffer >> x >> y >> stance >> z 
+  user->buffer >> x >> y >> stance >> z
         >> yaw >> pitch >> onground;
 
   if(!user->buffer)
@@ -461,72 +464,58 @@ int PacketHandler::player_digging(User *user)
   if(!Map::get()->getBlock(x, y, z, &block, &meta))
     return PACKET_OK;
 
-  Callback callback = Plugin::get()->getBlockCallback(block);
-  Function event;
   Function::invoker_type inv(user, status, x, y, z, direction);
 
   switch(status)
   {
      case BLOCK_STATUS_STARTED_DIGGING:
-       event = callback.get("onStartedDigging");
-       if (event) inv(event);
+       Plugin::get()->runBlockCallback(block, "onStartedDigging", inv);
      break;
      case BLOCK_STATUS_DIGGING:
+       Plugin::get()->runBlockCallback(block, "onDigging", inv);
      break;
      case BLOCK_STATUS_STOPPED_DIGGING:
+       Plugin::get()->runBlockCallback(block, "onStoppedDigging", inv);
      break;
      case BLOCK_STATUS_BLOCK_BROKEN:
-       event = callback.get("onBroken");
-       if (event) inv(event);
+       Plugin::get()->runBlockCallback(block, "onBroken", inv);
 
        /* notify neighbour blocks of the broken block */
        status = block;
        if (Map::get()->getBlock(x+1, y, z, &block, &meta) && block != BLOCK_AIR)
        {
-          callback = Plugin::get()->getBlockCallback(block);
           inv = Function::invoker_type(user, status, x+1, y, z, BLOCK_SOUTH);
-          event = callback.get("onNeighbourBroken");
-          if (event) inv(event);
+          Plugin::get()->runBlockCallback(block, "onNeighbourBroken", inv);
        }
-       
+
        if (Map::get()->getBlock(x-1, y, z, &block, &meta) && block != BLOCK_AIR)
        {
-          callback = Plugin::get()->getBlockCallback(block);
           inv = Function::invoker_type(user, status, x-1, y, z, BLOCK_NORTH);
-          event = callback.get("onNeighbourBroken");
-          if (event) inv(event);
+          Plugin::get()->runBlockCallback(block, "onNeighbourBroken", inv);
        }
 
        if (Map::get()->getBlock(x, y+1, z, &block, &meta) && block != BLOCK_AIR)
        {
-          callback = Plugin::get()->getBlockCallback(block);
           inv = Function::invoker_type(user, status, x, y+1, z, BLOCK_TOP);
-          event = callback.get("onNeighbourBroken");
-          if (event) inv(event);
+          Plugin::get()->runBlockCallback(block, "onNeighbourBroken", inv);
        }
-       
+
        if (Map::get()->getBlock(x, y-1, z, &block, &meta) && block != BLOCK_AIR)
        {
-          callback = Plugin::get()->getBlockCallback(block);
           inv = Function::invoker_type(user, status, x, y-1, z, BLOCK_BOTTOM);
-          event = callback.get("onNeighbourBroken");
-          if (event) inv(event);
+          Plugin::get()->runBlockCallback(block, "onNeighbourBroken", inv);
        }
 
        if (Map::get()->getBlock(x, y, z+1, &block, &meta) && block != BLOCK_AIR)
        {
-          callback = Plugin::get()->getBlockCallback(block);
           inv = Function::invoker_type(user, status, x, y, z+1, BLOCK_WEST);
-          event = callback.get("onNeighbourBroken");
-          if (event) inv(event);
+          Plugin::get()->runBlockCallback(block, "onNeighbourBroken", inv);
        }
-       
+
        if (Map::get()->getBlock(x, y, z-1, &block, &meta) && block != BLOCK_AIR)
        {
-          callback = Plugin::get()->getBlockCallback(block);
           inv = Function::invoker_type(user, status, x, y, z-1, BLOCK_EAST);
-          event = callback.get("onNeighbourBroken");
-          if (event) inv(event);
+          Plugin::get()->runBlockCallback(block, "onNeighbourBroken", inv);
        }
      break;
   }
@@ -552,7 +541,7 @@ int PacketHandler::player_block_placement(User *user)
 
   user->buffer.removePacket();
 
-  // TODO: Handle processing of 
+  // TODO: Handle processing of
   if(direction == -1)
     return PACKET_OK;
 
@@ -562,20 +551,21 @@ int PacketHandler::player_block_placement(User *user)
     if(oldblock != BLOCK_MINECART_TRACKS) return PACKET_OK;
     std::cout << "Spawn minecart" << std::endl;
     sint32 EID=generateEID();
-    Packet pkt; 
+    Packet pkt;
     //                                              MINECART
-    pkt << PACKET_ADD_OBJECT << (sint32)EID <<  (sint8)10       << (sint32)(x*32+16) << (sint32)(y*32) << (sint32)(z*32+16);      
+    pkt << PACKET_ADD_OBJECT << (sint32)EID <<  (sint8)10       << (sint32)(x*32+16) << (sint32)(y*32) << (sint32)(z*32+16);
     user->sendAll((uint8 *)pkt.getWrite(), pkt.getWriteLen());
   }
 
-  if ((newblock > 0xFF || newblock == -1) && newblock != ITEM_SIGN)
+  if (newblock == -1 && newblock != ITEM_SIGN)
+  {
+     std::cout << "ignoring:" << newblock << std::endl;
      return PACKET_OK;
-  
+  }
 
-    
   if(y < 0)
     return PACKET_OK;
-    
+
   #ifdef _DEBUG
     std::cout << "Block_placement: " << newblock << " (" << x << "," << (int)y << "," << z << ") dir: " << (int)direction << std::endl;
   #endif
@@ -583,67 +573,97 @@ int PacketHandler::player_block_placement(User *user)
   if (direction)
     direction = 6-direction;
 
-  if (Map::get()->getBlock(x, y, z, &oldblock, &metadata)) 
+  Callback callback;
+  Function event;
+  Function::invoker_type inv(user, newblock, x, y, z, direction);
+
+  if (Map::get()->getBlock(x, y, z, &oldblock, &metadata))
   {
-     Callback callback;
-     Function event;
-     Function::invoker_type inv(user, newblock, x, y, z, direction);
+     uint8 oldblocktop;
+     uint8 metadatatop;
+     sint8 check_y = y;
+     sint32 check_x = x;
+     sint32 check_z = z;
 
-     callback = Plugin::get()->getBlockCallback(oldblock);
-     event = callback.get("onReplace");
-     if (event) inv(event);  
+     /* client doesn't give us the correct block for lava
+        and water, check block above */
+     switch(direction)
+     {
+        case BLOCK_TOP:
+            check_y++;
+        break;
+        case BLOCK_NORTH:
+            check_x++;
+        break;
+        case BLOCK_SOUTH:
+            check_x--;
+        break;
+        case BLOCK_EAST:
+            check_z++;
+        break;
+        case BLOCK_WEST:
+            check_z--;
+        break;
+        default:
+        break;
+     }
 
-     callback = Plugin::get()->getBlockCallback(newblock);
-     event = callback.get("onPlace");
-     if (event) inv(event);
+     if (Map::get()->getBlock(check_x, check_y, check_z, &oldblocktop, &metadatatop)
+     && (oldblocktop == BLOCK_LAVA || oldblocktop == BLOCK_STATIONARY_LAVA
+         || oldblocktop == BLOCK_WATER || oldblocktop == BLOCK_STATIONARY_WATER))
+     {
+       /* block above needs replacing rather then the block send by the client */
+       inv = Function::invoker_type(user, newblock, check_x, check_y, check_z, direction);
+       Plugin::get()->runBlockCallback(oldblocktop, "onReplace", inv);
+     }
+     else
+     {
+       inv = Function::invoker_type(user, newblock, x, y, z, direction);
+       Plugin::get()->runBlockCallback(oldblock, "onReplace", inv);
+     }
+
+     /* We pass the newblock to the newblock's onPlace callback because
+     the callback doesn't know what type of block we're placing. Instead
+     the callback's job is to describe the behaviour when placing the
+     block down, not to place any specifically block itself. */
+     inv = Function::invoker_type(user, newblock, x, y, z, direction);
+     Plugin::get()->runBlockCallback(newblock, "onPlace", inv);
 
      /* notify neighbour blocks of the placed block */
      if (Map::get()->getBlock(x+1, y, z, &block, &meta) && block != BLOCK_AIR)
      {
-        callback = Plugin::get()->getBlockCallback(block);
         inv = Function::invoker_type(user, newblock, x+1, y, z, BLOCK_SOUTH);
-        event = callback.get("onNeighbourPlace");
-        if (event) inv(event);
+        Plugin::get()->runBlockCallback(block, "onNeighbourPlace", inv);
      }
-    
+
      if (Map::get()->getBlock(x-1, y, z, &block, &meta) && block != BLOCK_AIR)
      {
-        callback = Plugin::get()->getBlockCallback(block);
         inv = Function::invoker_type(user, newblock, x-1, y, z, BLOCK_NORTH);
-        event = callback.get("onNeighbourPlace");
-        if (event) inv(event);
+        Plugin::get()->runBlockCallback(block, "onNeighbourPlace", inv);
      }
 
      if (Map::get()->getBlock(x, y+1, z, &block, &meta) && block != BLOCK_AIR)
      {
-        callback = Plugin::get()->getBlockCallback(block);
         inv = Function::invoker_type(user, newblock, x, y+1, z, BLOCK_TOP);
-        event = callback.get("onNeighbourPlace");
-        if (event) inv(event);
+        Plugin::get()->runBlockCallback(block, "onNeighbourPlace", inv);
      }
-    
+
      if (Map::get()->getBlock(x, y-1, z, &block, &meta) && block != BLOCK_AIR)
      {
-        callback = Plugin::get()->getBlockCallback(block);
         inv = Function::invoker_type(user, newblock, x, y-1, z, BLOCK_BOTTOM);
-        event = callback.get("onNeighbourPlace");
-        if (event) inv(event);
+        Plugin::get()->runBlockCallback(block, "onNeighbourPlace", inv);
      }
 
      if (Map::get()->getBlock(x, y, z+1, &block, &meta) && block != BLOCK_AIR)
      {
-        callback = Plugin::get()->getBlockCallback(block);
         inv = Function::invoker_type(user, newblock, x, y, z+1, BLOCK_WEST);
-        event = callback.get("onNeighbourPlace");
-        if (event) inv(event);
+        Plugin::get()->runBlockCallback(block, "onNeighbourPlace", inv);
      }
 
      if (Map::get()->getBlock(x, y, z-1, &block, &meta) && block != BLOCK_AIR)
      {
-        callback = Plugin::get()->getBlockCallback(block);
         inv = Function::invoker_type(user, newblock, x, y, z-1, BLOCK_EAST);
-        event = callback.get("onNeighbourPlace");
-        if (event) inv(event);
+        Plugin::get()->runBlockCallback(block, "onNeighbourPlace", inv);
      }
   }
   /* TODO: Should be removed from here. Only needed for liquid related blocks? */
@@ -667,6 +687,9 @@ int PacketHandler::holding_change(User *user)
   pkt << (sint8)PACKET_HOLDING_CHANGE << (sint32)user->UID << itemID;
   user->sendOthers((uint8*)pkt.getWrite(), pkt.getWriteLen());
 
+  // Set current itemID to user
+  user->setCurrentItem(itemID);
+
   return PACKET_OK;
 }
 
@@ -674,7 +697,7 @@ int PacketHandler::arm_animation(User *user)
 {
   sint32 userID;
   sint8 animType;
-  
+
   user->buffer >> userID >> animType;
 
   if(!user->buffer)
@@ -693,13 +716,13 @@ int PacketHandler::pickup_spawn(User *user)
 {
   //uint32 curpos = 4; //warning: unused variable ‘curpos’
   spawnedItem item;
-  
+
   item.health = 0;
 
   sint8 yaw, pitch, roll;
 
   user->buffer >> (sint32&)item.EID;
-  
+
   user->buffer >> (sint16&)item.item >> (sint8&)item.count ;
   user->buffer >> (sint32&)item.pos.x() >> (sint32&)item.pos.y() >> (sint32&)item.pos.z();
   user->buffer >> yaw >> pitch >> roll;
@@ -712,14 +735,14 @@ int PacketHandler::pickup_spawn(User *user)
   item.EID    = generateEID();
 
   item.spawnedBy = user->UID;
-  
+
   // Modify the position of the dropped item so that it appears in front of user instead of under user
   int distanceToThrow = 64;
   float angle = DEGREES_TO_RADIANS(user->pos.yaw + 45);     // For some reason, yaw seems to be off to the left by 45 degrees from where you're actually looking?
   int x = int(cos(angle) * distanceToThrow - sin(angle) * distanceToThrow);
   int z = int(sin(angle) * distanceToThrow + cos(angle) * distanceToThrow);
   item.pos += vec(x, 0, z);
- 
+
   Map::get()->sendPickupSpawn(item);
 
   return PACKET_OK;
@@ -741,16 +764,15 @@ int PacketHandler::disconnect(User *user)
   std::cout << "Disconnect: " << msg << std::endl;
 
   event_del(user->GetEvent());
-  
+
   #ifdef WIN32
   closesocket(user->fd);
   #else
   close(user->fd);
   #endif
-  
-  remUser(user->fd);
 
-  
+  delete user;
+
   return PACKET_OK;
 }
 
@@ -781,7 +803,7 @@ int PacketHandler::complex_entities(User *user)
   Map::get()->getBlock(x, y, z, &block, &meta);
 
   //We only handle chest for now
-  if(block != BLOCK_CHEST && block != BLOCK_FURNACE && block != BLOCK_SIGN_POST && block != BLOCK_WALL_SIGN)
+  if(block != BLOCK_CHEST && block != BLOCK_FURNACE && block != BLOCK_BURNING_FURNACE && block != BLOCK_SIGN_POST && block != BLOCK_WALL_SIGN)
   {
     delete[] buffer;
     return PACKET_OK;
@@ -807,7 +829,7 @@ int PacketHandler::complex_entities(User *user)
 
   zstream.avail_out = uncompressedSize;
   zstream.next_out = uncompressedBuffer;
-  
+
   //Uncompress
   if(inflate(&zstream, Z_FULL_FLUSH)!=Z_STREAM_END)
   {
@@ -820,7 +842,7 @@ int PacketHandler::complex_entities(User *user)
 
   //Get size
   uncompressedSize  = zstream.total_out;
-  
+
   uint8 *ptr = uncompressedBuffer + 3; // skip blank compound
   int remaining = uncompressedSize;
 
@@ -831,7 +853,13 @@ int PacketHandler::complex_entities(User *user)
   entity->Print();
 #endif
 
-  Map::get()->setComplexEntity(x, y, z, entity);
+    // Check if this is a Furnace and handle if so
+    if(block == BLOCK_FURNACE || block == BLOCK_BURNING_FURNACE) {
+      FurnaceManager::get()->handleActivity(entity, block);
+    }
+    else {
+      Map::get()->setComplexEntity(x, y, z, entity);
+    }
 
   delete [] buffer;
 
@@ -843,17 +871,17 @@ int PacketHandler::use_entity(User *user)
 {
   sint32 userID, target;
   sint8 targetType;
-  
+
   user->buffer >> userID >> target >> targetType;
-  
+
   if (!user->buffer)
     return PACKET_NEED_MORE_DATA;
-  
+
   user->buffer.removePacket();
 
   if(targetType != 1)
   {
-    
+
     Packet pkt;
     //Attach
     if(user->attachedTo == 0)
@@ -872,18 +900,18 @@ int PacketHandler::use_entity(User *user)
   }
 
   //This is used when punching users
-  for(uint32 i = 0; i < Users.size(); i++)
+  for(uint32 i = 0; i < User::all().size(); i++)
   {
-    if(Users[i]->UID == (uint32)target)
+    if(User::all()[i]->UID == (uint32)target)
     {
-      Users[i]->health--;
-      Users[i]->sethealth(Users[i]->health);
-      
-      if(Users[i]->health <= 0)
+      User::all()[i]->health--;
+      User::all()[i]->sethealth(User::all()[i]->health);
+
+      if(User::all()[i]->health <= 0)
       {
         Packet pkt;
-        pkt << PACKET_DEATH_ANIMATION << (sint32)Users[i]->UID << (sint8)3;
-        Users[i]->sendOthers((uint8*)pkt.getWrite(), pkt.getWriteLen());
+        pkt << PACKET_DEATH_ANIMATION << (sint32)User::all()[i]->UID << (sint8)3;
+        User::all()[i]->sendOthers((uint8*)pkt.getWrite(), pkt.getWriteLen());
       }
       break;
     }

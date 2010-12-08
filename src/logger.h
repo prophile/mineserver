@@ -30,7 +30,7 @@
 //
 #include <string>
 
-#define LOG(msg) Logger::get()->log(msg, std::string(__FILE__), __LINE__)
+#define LOG(msg) Logger::get()->log(msg, std::string(((strrchr(__FILE__, '/') ?"": __FILE__ - 1) + 1)), __LINE__)
 
 class Logger
 {
@@ -38,15 +38,16 @@ private:
   Logger()
   {
   }
-  static Logger *mLogger;
+  static Logger *_instance;
 public:
   void log(std::string msg, std::string file, int line);
   static Logger* get()
   {
-     if(!mLogger) {
-        mLogger = new Logger();
-     }
-     return mLogger;
+    if(!_instance)
+    {
+      _instance = new Logger();
+    }
+     return _instance;
   }
   void free();
 };
