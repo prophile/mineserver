@@ -1,64 +1,148 @@
 /*
-   Copyright (c) 2010, The Mineserver Project
+   Copyright (c) 2011, The Mineserver Project
    All rights reserved.
 
-   Redistribution and use in source and binary forms, with or without
-   modification, are permitted provided that the following conditions are met:
- * Redistributions of source code must retain the above copyright
-      notice, this list of conditions and the following disclaimer.
- * Redistributions in binary form must reproduce the above copyright
-      notice, this list of conditions and the following disclaimer in the
-      documentation and/or other materials provided with the distribution.
- * Neither the name of the The Mineserver Project nor the
-      names of its contributors may be used to endorse or promote products
-      derived from this software without specific prior written permission.
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are met:
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in the
+    documentation and/or other materials provided with the distribution.
+  * Neither the name of the The Mineserver Project nor the
+    names of its contributors may be used to endorse or promote products
+    derived from this software without specific prior written permission.
 
-   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-   ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-   WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-   DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY
-   DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-   (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-   LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-   ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+  ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+  WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY
+  DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+  ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "sign.h"
 #include <math.h>
 
-void BlockSign::onStartedDigging(User* user, sint8 status, sint32 x, sint8 y, sint32 z, sint8 direction)
+#include "../mineserver.h"
+#include "../map.h"
+
+#include "sign.h"
+
+bool BlockSign::affectedBlock(int block)
+{
+  switch(block)
+  {
+  case BLOCK_WALL_SIGN:
+  case BLOCK_SIGN_POST:
+  case ITEM_SIGN:
+    return true;
+  }
+  return false;
+}
+
+
+void BlockSign::onStartedDigging(User* user, int8_t status, int32_t x, int8_t y, int32_t z, int map, int8_t direction)
 {
 }
 
-void BlockSign::onDigging(User* user, sint8 status, sint32 x, sint8 y, sint32 z, sint8 direction)
+void BlockSign::onDigging(User* user, int8_t status, int32_t x, int8_t y, int32_t z, int map, int8_t direction)
 {
 }
 
-void BlockSign::onStoppedDigging(User* user, sint8 status, sint32 x, sint8 y, sint32 z, sint8 direction)
+void BlockSign::onStoppedDigging(User* user, int8_t status, int32_t x, int8_t y, int32_t z, int map, int8_t direction)
 {
 }
 
-void BlockSign::onBroken(User* user, sint8 status, sint32 x, sint8 y, sint32 z, sint8 direction)
+bool BlockSign::onBroken(User* user, int8_t status, int32_t x, int8_t y, int32_t z, int map, int8_t direction)
 {
+  Mineserver::get()->map(map)->sendBlockChange(x, y, z, BLOCK_AIR, 0);
+  Mineserver::get()->map(map)->setBlock(x, y, z, BLOCK_AIR, 0);
+  this->spawnBlockItem(x,y,z,map,BLOCK_WALL_SIGN);
+
+  //Remove sign data from the chunk
+  sChunk *chunk = Mineserver::get()->map(map)->chunks.getChunk(x,z);
+  if(chunk != NULL)
+  {
+    for(uint32_t i = 0; i < chunk->signs.size(); i++)
+    {
+      if (chunk->signs[i]->x == x &&
+          chunk->signs[i]->y == y &&
+          chunk->signs[i]->z == z)
+      {
+        chunk->signs.erase(chunk->signs.begin()+i);
+        break;
+      }
+    }
+  }
+  return false;
 }
 
-void BlockSign::onNeighbourBroken(User* user, sint8 oldblock, sint32 x, sint8 y, sint32 z, sint8 direction)
+void BlockSign::onNeighbourBroken(User* user, int16_t oldblock, int32_t x, int8_t y, int32_t z, int map, int8_t direction)
 {
+  uint8_t block,meta;
+  Mineserver::get()->map(map)->getBlock(x, y, z, &block, &meta);
+
+  bool blockBroken = false;
+
+  //Ladder is not attached to top or bottom block
+  if(direction == BLOCK_BOTTOM)
+  {
+    return;
+  }
+
+  if(direction == BLOCK_TOP && block == BLOCK_SIGN_POST)
+  {
+    blockBroken = true;
+  }
+  else if( block == BLOCK_WALL_SIGN &&
+          ((meta == 2 && direction == BLOCK_EAST)  ||
+           (meta == 3 && direction == BLOCK_WEST)  ||
+           (meta == 4 && direction == BLOCK_NORTH) ||
+           (meta == 5 && direction == BLOCK_SOUTH)))
+  {
+    blockBroken = true;
+  }
+
+
+  if(blockBroken)
+  {
+    Mineserver::get()->map(map)->sendBlockChange(x, y, z, BLOCK_AIR, 0);
+    Mineserver::get()->map(map)->setBlock(x, y, z, BLOCK_AIR, 0);
+    this->spawnBlockItem(x, y, z,map, block, 0);
+
+    //Remove sign data from the chunk
+    sChunk *chunk = Mineserver::get()->map(map)->chunks.getChunk(x,z);
+    if(chunk != NULL)
+    {
+      for(uint32_t i = 0; i < chunk->signs.size(); i++)
+      {
+        if (chunk->signs[i]->x == x &&
+            chunk->signs[i]->y == y &&
+            chunk->signs[i]->z == z)
+        {
+          chunk->signs.erase(chunk->signs.begin()+i);
+          break;
+        }
+      }
+    }
+  }
 }
 
-void BlockSign::onPlace(User* user, sint8 newblock, sint32 x, sint8 y, sint32 z, sint8 direction)
+bool BlockSign::onPlace(User* user, int16_t newblock, int32_t x, int8_t y, int32_t z, int map, int8_t direction)
 {
-   uint8 oldblock;
-   uint8 oldmeta;
+   uint8_t oldblock;
+   uint8_t oldmeta;
 
-   if (!Map::get()->getBlock(x, y, z, &oldblock, &oldmeta))
-      return;
+   if (!Mineserver::get()->map(map)->getBlock(x, y, z, &oldblock, &oldmeta))
+      return true;
 
    /* Check block below allows blocks placed on top */
    if (!this->isBlockStackable(oldblock))
-      return;
+      return true;
 
    // 0x0 -> West  West  West  West
    // 0x1 -> West  West  West  North
@@ -120,7 +204,7 @@ void BlockSign::onPlace(User* user, sint8 newblock, sint32 x, sint8 y, sint32 z,
 
    double angleDegree = ((atan2(diffZ, diffX) * 180 / M_PI + 90) / 22.5);
 
-   uint8 metadata;
+   uint8_t metadata;
    if (angleDegree < 0)
    {
       angleDegree += 16;
@@ -144,25 +228,26 @@ void BlockSign::onPlace(User* user, sint8 newblock, sint32 x, sint8 y, sint32 z,
       case BLOCK_TOP:
          y++;
          newblock = BLOCK_SIGN_POST;
-         metadata = (uint8)(angleDegree + 0.5);
+         metadata = (uint8_t)(angleDegree + 0.5);
       break;
       case BLOCK_BOTTOM:
       default:
-         return;
+         return true;
       break;
    }
 
-   if (!this->isBlockEmpty(x,y,z))
-      return;
+   if (!this->isBlockEmpty(x,y,z,map))
+      return true;
 
-   Map::get()->setBlock(x, y, z, (char)newblock, metadata);
-   Map::get()->sendBlockChange(x, y, z, (char)newblock, metadata);
+   Mineserver::get()->map(map)->setBlock(x, y, z, (char)newblock, metadata);
+   Mineserver::get()->map(map)->sendBlockChange(x, y, z, (char)newblock, metadata);
+   return false;
 }
 
-void BlockSign::onNeighbourPlace(User* user, sint8 newblock, sint32 x, sint8 y, sint32 z, sint8 direction)
+void BlockSign::onNeighbourPlace(User* user, int16_t newblock, int32_t x, int8_t y, int32_t z, int map, int8_t direction)
 {
 }
 
-void BlockSign::onReplace(User* user, sint8 newblock, sint32 x, sint8 y, sint32 z, sint8 direction)
+void BlockSign::onReplace(User* user, int16_t newblock, int32_t x, int8_t y, int32_t z, int map, int8_t direction)
 {
 }

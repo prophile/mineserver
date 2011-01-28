@@ -1,31 +1,30 @@
 /*
-   Copyright (c) 2010, The Mineserver Project
+   Copyright (c) 2011, The Mineserver Project
    All rights reserved.
 
-   Redistribution and use in source and binary forms, with or without
-   modification, are permitted provided that the following conditions are met:
- * Redistributions of source code must retain the above copyright
-      notice, this list of conditions and the following disclaimer.
- * Redistributions in binary form must reproduce the above copyright
-      notice, this list of conditions and the following disclaimer in the
-      documentation and/or other materials provided with the distribution.
- * Neither the name of the The Mineserver Project nor the
-      names of its contributors may be used to endorse or promote products
-      derived from this software without specific prior written permission.
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are met:
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in the
+    documentation and/or other materials provided with the distribution.
+  * Neither the name of the The Mineserver Project nor the
+    names of its contributors may be used to endorse or promote products
+    derived from this software without specific prior written permission.
 
-   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-   ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-   WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-   DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY
-   DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-   (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-   LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-   ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+  ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+  WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY
+  DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+  ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
 
-#include <vector>
 #include <cstdlib>
 #include <cstdio>
 #include <iostream>
@@ -44,272 +43,374 @@
 #endif
 #include <zlib.h>
 #include <ctime>
+
 #include "constants.h"
 
 #include "logger.h"
-#include "tools.h"
 #include "map.h"
 #include "user.h"
-#include "nbt.h"
 #include "chat.h"
+#include "plugin.h"
 #include "packets.h"
 #include "mineserver.h"
 #include "config.h"
+#include "permissions.h"
+#include "mob.h"
 
-//Generate "unique" entity ID
-uint32 generateEID()
-{
-  static uint32 EID = 0;
-  return ++EID;
-}
+// Generate "unique" entity ID
 
-
-User::User(int sock, uint32 EID)
+User::User(int sock, uint32_t EID)
 {
   this->action          = 0;
   this->muted           = false;
-	this->dnd							= false;
+  this->dnd             = false;
   this->waitForData     = false;
   this->fd              = sock;
   this->UID             = EID;
   this->logged          = false;
-  // ENABLED FOR DEBUG
-
-  this->pos.x           = Map::get()->spawnPos.x();
-  this->pos.y           = Map::get()->spawnPos.y();
-  this->pos.z           = Map::get()->spawnPos.z();
+  this->serverAdmin     = false;
+  this->pos.map         = 0;
+  this->pos.x           = Mineserver::get()->map(pos.map)->spawnPos.x();
+  this->pos.y           = Mineserver::get()->map(pos.map)->spawnPos.y();
+  this->pos.z           = Mineserver::get()->map(pos.map)->spawnPos.z();
   this->write_err_count = 0;
   this->health          = 20;
   this->attachedTo      = 0;
   this->timeUnderwater  = 0;
+  this->isOpenInv       = false;
+  this->lastData        = time(NULL);
+  this->permissions     = 0;
 
-  Mineserver::get().users().push_back(this);
-}
+  this->m_currentItemSlot = 0;
+  this->inventoryHolding  = Item();
+  this->curItem          = 0;
 
-
-bool User::checkBanned(std::string _nick)
-{
-  nick = _nick;
-
-  // Check banstatus
-  for(unsigned int i = 0; i < Conf::get()->banned().size(); i++)
+  // Ignore this user if it's the server console
+  if (this->UID != SERVER_CONSOLE_UID)
   {
-    if(Conf::get()->banned()[i] == nick)
-    {
-      return true;
-    }
+    Mineserver::get()->users().push_back(this);
   }
-
-  return false;
-}
-
-bool User::checkWhitelist(std::string _nick)
-{
-	nick = _nick;
-
-    // Check if nick is whitelisted, providing it is enabled
-  for(unsigned int i = 0; i < Conf::get()->whitelist().size(); i++)
-  {
-    if(Conf::get()->whitelist()[i] == nick)
-    {
-      return true;
-    }
-  }
-
-  return false;
 }
 
 bool User::changeNick(std::string _nick)
 {
+  (static_cast<Hook2<bool,const char*,const char*>*>(Mineserver::get()->plugin()->getHook("PlayerNickPost")))->doAll(nick.c_str(), _nick.c_str());
+
   nick = _nick;
-
-  SET_GUEST(permissions); // default
-
-  // Check adminstatus
-  for(unsigned int i = 0; i < Conf::get()->admins().size(); i++)
-  {
-    if(Conf::get()->admins()[i] == nick)
-    {
-      SET_ADMIN(permissions);
-      break;
-    }
-  }
-
-  // Check op status
-  for(unsigned int i = 0; i < Conf::get()->ops().size(); i++)
-  {
-    if(Conf::get()->ops()[i] == nick)
-    {
-      SET_OP(permissions);
-      break;
-    }
-  }
-
-  // Check member status
-  for(unsigned int i = 0; i < Conf::get()->members().size(); i++)
-  {
-    if(Conf::get()->members()[i] == nick)
-    {
-      SET_MEMBER(permissions);
-      break;
-    }
-  }
+  SET_ADMIN(permissions);
 
   return true;
 }
 
 User::~User()
 {
-  for(std::vector<User*>::iterator it = Mineserver::get().users().begin();
-      it != Mineserver::get().users().end();
-      it++)
+  if(this->UID != SERVER_CONSOLE_UID && event_del(GetEvent()) == -1)
   {
-    if((*it) == this)
+    Mineserver::get()->logger()->log(LogType::LOG_WARNING, "User", this->nick + " event del failed!");
+  }
+
+  if (fd != -1)
+  {
+#ifdef WIN32
+    closesocket(fd);
+#else
+    close(fd);
+#endif
+  }
+
+  this->buffer.reset();
+
+  // Remove all known chunks
+  for (uint32_t i=0;i<mapKnown.size();i++)
+  {
+    delKnown(mapKnown[i].x(), mapKnown[i].z());
+  }
+
+  std::vector<User*>::iterator it_a = Mineserver::get()->users().begin();
+  std::vector<User*>::iterator it_b = Mineserver::get()->users().end();
+  for (;it_a!=it_b;++it_a)
+  {
+    if ((*it_a) == this)
     {
-      Mineserver::get().users().erase(it);
+      Mineserver::get()->users().erase(it_a);
+      //Mineserver::get()->logger()->log(LogType::LOG_WARNING, "User", this->nick + " erased!");
       break;
     }
   }
 
-  if(this->nick.size())
+  if (logged)
   {
-    Chat::get()->sendMsg(this, this->nick + " disconnected!", Chat::OTHERS);
+    for (int mapx = -viewDistance+curChunk.x(); mapx <= viewDistance+curChunk.x(); mapx++)
+    {
+      for (int mapz = -viewDistance+curChunk.z(); mapz <= viewDistance+curChunk.z(); mapz++)
+      {
+        sChunk* chunk = Mineserver::get()->map(pos.map)->chunks.getChunk(mapx, mapz);
+        if (chunk != NULL)
+        {
+          chunk->users.erase(this);
+          if (chunk->users.size() == 0)
+          {
+            Mineserver::get()->map(pos.map)->releaseMap(mapx, mapz);
+          }
+        }
+      }
+    }
+
+    Mineserver::get()->chat()->sendMsg(this, this->nick + " disconnected!", Chat::OTHERS);
+    //Mineserver::get()->logger()->log(LogType::LOG_WARNING, "User", this->nick + " removed!");
     this->saveData();
 
-    //Send signal to everyone that the entity is destroyed
-    uint8 entityData[5];
-    entityData[0] = 0x1d; //Destroy entity;
+    // Send signal to everyone that the entity is destroyed
+    uint8_t entityData[5];
+    entityData[0] = 0x1d; // Destroy entity;
     putSint32(&entityData[1], this->UID);
     this->sendOthers(&entityData[0], 5);
+
+    //Loop every chunk loaded to make sure no user pointers are left!
+    for (int i=0;i<441;++i)
+    {
+      for (sChunkNode* node = Mineserver::get()->map(pos.map)->chunks.getBuckets()[i];node!=NULL;node=node->next)
+      {
+        /*
+        //Debug
+        if (node->chunk->users.count(this) > 0)
+        {
+          Mineserver::get()->logger()->log(LogType::LOG_WARNING, "User", "Found loose user pointer!");
+        }
+        */
+        node->chunk->users.erase(this);
+        if (node->chunk->users.size() == 0)
+        {
+          Mineserver::get()->map(pos.map)->releaseMap(node->chunk->x, node->chunk->z);
+        }
+      }
+    }
   }
+
+  if (fd != -1 && logged)
+  {
+    (static_cast<Hook1<bool,const char*>*>(Mineserver::get()->plugin()->getHook("PlayerQuitPost")))->doAll(nick.c_str());
+  }
+}
+
+bool User::sendLoginInfo()
+{
+  // Load user data
+  loadData();
+
+  // Login OK package
+  buffer << (int8_t)PACKET_LOGIN_RESPONSE << (int32_t)UID << std::string("") << std::string("") << (int64_t)0 << (int8_t)0;
+
+  // Send spawn position
+  buffer << (int8_t)PACKET_SPAWN_POSITION << (int32_t)pos.x << ((int32_t)pos.y+2) << (int32_t)pos.z;
+
+  // Put nearby chunks to queue
+  for (int x = -viewDistance; x <= viewDistance; x++)
+  {
+    for (int z = -viewDistance; z <= viewDistance; z++)
+    {
+      addQueue((int32_t)pos.x/16+x, (int32_t)pos.z/16+z);
+    }
+  }
+  // Push chunks to user
+  pushMap(); pushMap();
+
+
+
+  // Teleport player
+  teleport(pos.x, pos.y+2, pos.z);
+
+  // Send server time (after dawn)
+  buffer << (int8_t)PACKET_TIME_UPDATE << (int64_t)Mineserver::get()->map(pos.map)->mapTime;
+
+
+  // Inventory
+  for (int i=1; i<45; i++)
+  {   
+    if (inv[i].type != -1 && inv[i].count)
+    {
+      buffer << (int8_t)PACKET_SET_SLOT << (int8_t)0 << (int16_t)(i) << (int16_t)inv[i].type << (int8_t)(inv[i].count) << (int16_t)inv[i].health;
+    }
+  }
+
+  std::vector<Mob*> mob = Mineserver::get()->mobs()->getAll();
+  std::vector<Mob*>::iterator i = mob.begin();
+  for(;i!=mob.end();i++)
+  {
+    if(pos.map==(*i)->map &&  (*i)->spawned)
+    {
+      buffer << PACKET_MOB_SPAWN << (int32_t) (*i)->UID << (int8_t) (*i)->type
+             << (int32_t)(*i)->x << (int32_t) (*i)->y << (int32_t) (*i)->z 
+             << (int8_t) (*i)->yaw << (int8_t) (*i)->pitch;
+      if((*i)->type == MOB_SHEEP)
+      {
+        buffer << (int8_t) 0 << (int8_t) (*i)->meta << (int8_t) 127;
+      }
+      else
+      {
+        buffer << (int8_t) 127;
+      }
+    }
+  }
+
+  // Spawn this user to others
+  spawnUser((int32_t)pos.x*32, ((int32_t)pos.y+2)*32, (int32_t)pos.z*32);
+  // Spawn other users for connected user
+  spawnOthers();
+
+  sethealth(health);
+  logged = true;
+
+  Mineserver::get()->chat()->sendMsg(this, nick+" connected!", Chat::ALL);
+
+  pushMap(); pushMap(); pushMap();
+  // Teleport player (again)
+  teleport(pos.x, pos.y+2, pos.z);
+
+  return true;
 }
 
 // Kick player
 bool User::kick(std::string kickMsg)
 {
-  buffer << (sint8)PACKET_KICK << kickMsg;
-  std::cout << nick << " kicked. Reason: " << kickMsg << std::endl;
+  buffer << (int8_t)PACKET_KICK << kickMsg;
+
+  (static_cast<Hook2<bool,const char*,const char*>*>(Mineserver::get()->plugin()->getHook("PlayerKickPost")))->doAll(nick.c_str(), kickMsg.c_str());
+
+  Mineserver::get()->logger()->log(LogType::LOG_WARNING, "User", nick + " kicked. Reason: " + kickMsg);
+
   return true;
 }
+
 bool User::mute(std::string muteMsg)
 {
-  if(!muteMsg.empty())
-    muteMsg = COLOR_YELLOW + "You have been muted.  Reason: " + muteMsg;
+  if (!muteMsg.empty())
+  {
+    muteMsg = MC_COLOR_YELLOW + "You have been muted.  Reason: " + muteMsg;
+  }
   else
-    muteMsg = COLOR_YELLOW + "You have been muted. ";
+  {
+    muteMsg = MC_COLOR_YELLOW + "You have been muted. ";
+  }
 
-  Chat::get()->sendMsg(this, muteMsg, Chat::USER);
+  Mineserver::get()->chat()->sendMsg(this, muteMsg, Chat::USER);
   this->muted = true;
-  std::cout << nick << " muted. Reason: " << muteMsg << std::endl;
+  Mineserver::get()->logger()->log(LogType::LOG_WARNING, "User", nick + " muted. Reason: " + muteMsg);
   return true;
 }
+
 bool User::unmute()
 {
-    Chat::get()->sendMsg(this, COLOR_YELLOW + "You have been unmuted.", Chat::USER);
+    Mineserver::get()->chat()->sendMsg(this, MC_COLOR_YELLOW + "You have been unmuted.", Chat::USER);
     this->muted = false;
-    std::cout << nick << " unmuted. " << std::endl;
+    Mineserver::get()->logger()->log(LogType::LOG_WARNING, "User", nick + " unmuted.");
     return true;
 }
+
 bool User::toggleDND()
 {
-	if(!this->dnd) {
-		Chat::get()->sendMsg(this, COLOR_YELLOW + "You have enabled 'Do Not Disturb' mode.", Chat::USER);
-		Chat::get()->sendMsg(this, COLOR_YELLOW + "You will no longer see chat or private messages.", Chat::USER);
-		Chat::get()->sendMsg(this, COLOR_YELLOW + "Type /dnd again to disable 'Do Not Disturb' mode.", Chat::USER);
-		this->dnd = true;
-	}
-	else {
-		this->dnd = false;
-		Chat::get()->sendMsg(this, COLOR_YELLOW + "You have disabled 'Do Not Disturb' mode.", Chat::USER);
-		Chat::get()->sendMsg(this, COLOR_YELLOW + "You can now see chat and private messages.", Chat::USER);
-		Chat::get()->sendMsg(this, COLOR_YELLOW + "Type /dnd again to enable 'Do Not Disturb' mode.", Chat::USER);
-	}
-	return this->dnd;
+  if (!this->dnd)
+  {
+    Mineserver::get()->chat()->sendMsg(this, MC_COLOR_YELLOW + "You have enabled 'Do Not Disturb' mode.", Chat::USER);
+    Mineserver::get()->chat()->sendMsg(this, MC_COLOR_YELLOW + "You will no longer see chat or private messages.", Chat::USER);
+    Mineserver::get()->chat()->sendMsg(this, MC_COLOR_YELLOW + "Type /dnd again to disable 'Do Not Disturb' mode.", Chat::USER);
+    this->dnd = true;
+  }
+  else
+  {
+    this->dnd = false;
+    Mineserver::get()->chat()->sendMsg(this, MC_COLOR_YELLOW + "You have disabled 'Do Not Disturb' mode.", Chat::USER);
+    Mineserver::get()->chat()->sendMsg(this, MC_COLOR_YELLOW + "You can now see chat and private messages.", Chat::USER);
+    Mineserver::get()->chat()->sendMsg(this, MC_COLOR_YELLOW + "Type /dnd again to enable 'Do Not Disturb' mode.", Chat::USER);
+  }
+  return this->dnd;
 }
+
 bool User::isAbleToCommunicate(std::string communicateCommand)
 {
-	// Check if this is chat or a regular command and prefix with a slash accordingly
-	if(communicateCommand != "chat")
-		communicateCommand = "/" + communicateCommand;
+  // Check if this is chat or a regular command and prefix with a slash accordingly
+  if (communicateCommand != "chat")
+    communicateCommand = "/" + communicateCommand;
 
-	if(this->muted) {
-		Chat::get()->sendMsg(this, COLOR_YELLOW + "You cannot " + communicateCommand + " while muted.", Chat::USER);
-		return false;
-	}
-	if(this->dnd) {
-		Chat::get()->sendMsg(this, COLOR_YELLOW + "You cannot " + communicateCommand + " while in 'Do Not Disturb' mode.", Chat::USER);
-		Chat::get()->sendMsg(this, COLOR_YELLOW + "Type /dnd to disable.", Chat::USER);
-		return false;
-	}
-	return true;
+  if (this->muted) {
+    Mineserver::get()->chat()->sendMsg(this, MC_COLOR_YELLOW + "You cannot " + communicateCommand + " while muted.", Chat::USER);
+    return false;
+  }
+  if (this->dnd) {
+    Mineserver::get()->chat()->sendMsg(this, MC_COLOR_YELLOW + "You cannot " + communicateCommand + " while in 'Do Not Disturb' mode.", Chat::USER);
+    Mineserver::get()->chat()->sendMsg(this, MC_COLOR_YELLOW + "Type /dnd to disable.", Chat::USER);
+    return false;
+  }
+  return true;
 }
+
 bool User::loadData()
 {
-  std::string infile = Map::get()->mapDirectory+"/players/"+this->nick+".dat";
+  std::string infile = Mineserver::get()->map(0)->mapDirectory+"/players/"+this->nick+".dat";
+  // Player data will ALWAYS use the first world in your map
 
   struct stat stFileInfo;
-  if(stat(infile.c_str(), &stFileInfo) != 0)
+  if (stat(infile.c_str(), &stFileInfo) != 0)
     return false;
 
-  NBT_Value * playerRoot = NBT_Value::LoadFromFile(infile.c_str());
-  NBT_Value &nbtPlayer = *playerRoot;
-  if(playerRoot == NULL)
+  NBT_Value*  playerRoot = NBT_Value::LoadFromFile(infile.c_str());
+  NBT_Value& nbtPlayer = *playerRoot;
+  if (playerRoot == NULL)
   {
-    LOG("Failed to open player file");
+    LOGLF("Failed to open player file");
     return false;
   }
 
-  std::vector<NBT_Value*> *_pos = nbtPlayer["Pos"]->GetList();
+  std::vector<NBT_Value*>* _pos = nbtPlayer["Pos"]->GetList();
   pos.x = (double)(*(*_pos)[0]);
   pos.y = (double)(*(*_pos)[1]);
   pos.z = (double)(*(*_pos)[2]);
 
   health = *nbtPlayer["Health"];
 
-  std::vector<NBT_Value*> *rot = nbtPlayer["Rotation"]->GetList();
+  std::vector<NBT_Value*>* rot = nbtPlayer["Rotation"]->GetList();
   pos.yaw = (float)(*(*rot)[0]);
   pos.yaw = (float)(*(*rot)[1]);
 
-  std::vector<NBT_Value*> *_inv = nbtPlayer["Inventory"]->GetList();
+  std::vector<NBT_Value*>* _inv = nbtPlayer["Inventory"]->GetList();
   std::vector<NBT_Value*>::iterator iter = _inv->begin(), end = _inv->end();
 
-  for( ; iter != end ; iter++ )
+  for ( ; iter != end ; iter++ )
   {
-    sint8 slot, count;
-    sint16 damage, item_id;
+    int8_t slot, count;
+    int16_t damage, item_id;
 
-    slot = *(**iter)["Slot"];
-    count = *(**iter)["Count"];
-    damage = *(**iter)["Damage"];
+    slot    = *(**iter)["Slot"];
+    count   = *(**iter)["Count"];
+    damage  = *(**iter)["Damage"];
     item_id = *(**iter)["id"];
+    if (item_id == 0 || count < 1)
+    {
+      item_id = -1;
+      count   =  0;
+    }
 
-      //Main inventory slot
-      if(slot >= 0 && slot <= 35)
-      {
-        inv.main[(uint8)slot].count  = count;
-        inv.main[(uint8)slot].health = damage;
-        inv.main[(uint8)slot].type   = item_id;
-        
-        // Add item at slot 0 to currentItem
-        if(slot == 0)
-        {
-          m_currentItem = item_id;
-        }
-      }
-      //Crafting
-      else if(slot >= 80 && slot <= 83)
-      {
-        inv.crafting[(uint8)slot-80].count  = count;
-        inv.crafting[(uint8)slot-80].health = damage;
-        inv.crafting[(uint8)slot-80].type   = item_id;   
-      }
-      //Equipped
-      else if(slot >= 100 && slot <= 103)
-      {
-        inv.equipped[(uint8)slot-100].count  = count;
-        inv.equipped[(uint8)slot-100].health = damage;
-        inv.equipped[(uint8)slot-100].type   = item_id;
-      }
+    // Main inventory slot, converting 0-35 slots to 9-44
+    if (slot >= 0 && slot <= 35)
+    {
+      inv[(uint8_t)slot+9].count  = count;
+      inv[(uint8_t)slot+9].health = damage;
+      inv[(uint8_t)slot+9].type   = item_id;
+    }
+    // Crafting, converting 80-83 slots to 1-4
+    else if (slot >= 80 && slot <= 83)
+    {
+      inv[(uint8_t)slot-79].count  = count;
+      inv[(uint8_t)slot-79].health = damage;
+      inv[(uint8_t)slot-79].type   = item_id;
+    }
+    // Equipped, converting 100-103 slots to 8-5 (reverse order!)
+    else if (slot >= 100 && slot <= 103)
+    {
+      inv[(uint8_t)8+(100-slot)].count  = count;
+      inv[(uint8_t)8+(100-slot)].health = damage;
+      inv[(uint8_t)8+(100-slot)].type   = item_id;
+    }
   }
 
   delete playerRoot;
@@ -319,19 +420,19 @@ bool User::loadData()
 
 bool User::saveData()
 {
-  std::string outfile = Map::get()->mapDirectory+"/players/"+this->nick+".dat";
+  std::string outfile = Mineserver::get()->map(0)->mapDirectory+"/players/"+this->nick+".dat";
   // Try to create parent directories if necessary
   struct stat stFileInfo;
-  if(stat(outfile.c_str(), &stFileInfo) != 0)
+  if (stat(outfile.c_str(), &stFileInfo) != 0)
   {
-    std::string outdir = Map::get()->mapDirectory+"/players";
+    std::string outdir = Mineserver::get()->map(0)->mapDirectory+"/players";
 
-    if(stat(outdir.c_str(), &stFileInfo) != 0)
+    if (stat(outdir.c_str(), &stFileInfo) != 0)
     {
 #ifdef WIN32
-      if(_mkdir(outdir.c_str()) == -1)
+      if (_mkdir(outdir.c_str()) == -1)
 #else
-      if(mkdir(outdir.c_str(), 0755) == -1)
+      if (mkdir(outdir.c_str(), 0755) == -1)
 #endif
 
         return false;
@@ -339,67 +440,78 @@ bool User::saveData()
   }
 
   NBT_Value val(NBT_Value::TAG_COMPOUND);
-  val.Insert("OnGround", new NBT_Value((sint8)1));
-  val.Insert("Air", new NBT_Value((sint16)300));
-  val.Insert("AttackTime", new NBT_Value((sint16)0));
-  val.Insert("DeathTime", new NBT_Value((sint16)0));
-  val.Insert("Fire", new NBT_Value((sint16)-20));
-  val.Insert("Health", new NBT_Value((sint16)health));
-  val.Insert("HurtTime", new NBT_Value((sint16)0));
+  val.Insert("OnGround", new NBT_Value((int8_t)1));
+  val.Insert("Air", new NBT_Value((int16_t)300));
+  val.Insert("AttackTime", new NBT_Value((int16_t)0));
+  val.Insert("DeathTime", new NBT_Value((int16_t)0));
+  val.Insert("Fire", new NBT_Value((int16_t)-20));
+  val.Insert("Health", new NBT_Value((int16_t)health));
+  val.Insert("HurtTime", new NBT_Value((int16_t)0));
   val.Insert("FallDistance", new NBT_Value(54.f));
 
-  NBT_Value *nbtInv = new NBT_Value(NBT_Value::TAG_LIST, NBT_Value::TAG_COMPOUND);
+  NBT_Value* nbtInv = new NBT_Value(NBT_Value::TAG_LIST, NBT_Value::TAG_COMPOUND);
 
-  //Start with main items
-  Item *slots   = (Item *)&inv.main;
-  char slotid   = 0;
   char itemslot = 0;
-  for(int i = 0; i < 36+4+4; i++)
+  // Start with main items
+  for (int slotid = 9; slotid < 45; slotid++,itemslot++)
   {
-    //Crafting items after main
-    if(i == 36)
+    if (inv[(uint8_t)slotid].count && inv[(uint8_t)slotid].type != 0 && inv[(uint8_t)slotid].type != -1)
     {
-      slots    = (Item *)&inv.crafting;
-      itemslot = 80;
-      slotid   = 0;
-    }
-    //Equipped items last
-    else if(i == 36+4)
-    {
-      slots    = (Item *)&inv.equipped;
-      itemslot = 100;
-      slotid   = 0;
-    }
-    if(slots[(uint8)slotid].count)
-    {
-    NBT_Value *val = new NBT_Value(NBT_Value::TAG_COMPOUND);
-    val->Insert("Count", new NBT_Value((sint8)slots[(uint8)slotid].count));
-    val->Insert("Slot", new NBT_Value((sint8)itemslot));
-    val->Insert("Damage", new NBT_Value((sint16)slots[(uint8)slotid].health));
-    val->Insert("id", new NBT_Value((sint16)slots[(uint8)slotid].type));
-    nbtInv->GetList()->push_back(val);
-    }
-
-    slotid++;
-    itemslot++;
+      NBT_Value* val = new NBT_Value(NBT_Value::TAG_COMPOUND);
+      val->Insert("Count", new NBT_Value((int8_t)inv[(uint8_t)slotid].count));
+      val->Insert("Slot", new NBT_Value((int8_t)itemslot));
+      val->Insert("Damage", new NBT_Value((int16_t)inv[(uint8_t)slotid].health));
+      val->Insert("id", new NBT_Value((int16_t)inv[(uint8_t)slotid].type));
+      nbtInv->GetList()->push_back(val);
+    }    
   }
+  // Crafting slots
+  itemslot = 80;
+  for (int slotid = 1; slotid < 6; slotid++,itemslot++)
+  {
+    if (inv[(uint8_t)slotid].count && inv[(uint8_t)slotid].type != 0 && inv[(uint8_t)slotid].type != -1)
+    {
+      NBT_Value* val = new NBT_Value(NBT_Value::TAG_COMPOUND);
+      val->Insert("Count", new NBT_Value((int8_t)inv[(uint8_t)slotid].count));
+      val->Insert("Slot", new NBT_Value((int8_t)itemslot));
+      val->Insert("Damage", new NBT_Value((int16_t)inv[(uint8_t)slotid].health));
+      val->Insert("id", new NBT_Value((int16_t)inv[(uint8_t)slotid].type));
+      nbtInv->GetList()->push_back(val);
+    }    
+  }
+
+  // Equipped items last
+  itemslot = 103;
+  for (int slotid = 5; slotid < 9; slotid++,itemslot--)
+  {
+    if (inv[(uint8_t)slotid].count && inv[(uint8_t)slotid].type != 0 && inv[(uint8_t)slotid].type != -1)
+    {
+      NBT_Value* val = new NBT_Value(NBT_Value::TAG_COMPOUND);
+      val->Insert("Count", new NBT_Value((int8_t)inv[(uint8_t)slotid].count));
+      val->Insert("Slot", new NBT_Value((int8_t)itemslot));
+      val->Insert("Damage", new NBT_Value((int16_t)inv[(uint8_t)slotid].health));
+      val->Insert("id", new NBT_Value((int16_t)inv[(uint8_t)slotid].type));
+      nbtInv->GetList()->push_back(val);
+    }    
+  }
+
 
   val.Insert("Inventory", nbtInv);
 
-  NBT_Value *nbtPos = new NBT_Value(NBT_Value::TAG_LIST, NBT_Value::TAG_DOUBLE);
+  NBT_Value* nbtPos = new NBT_Value(NBT_Value::TAG_LIST, NBT_Value::TAG_DOUBLE);
   nbtPos->GetList()->push_back(new NBT_Value((double)pos.x));
   nbtPos->GetList()->push_back(new NBT_Value((double)pos.y));
   nbtPos->GetList()->push_back(new NBT_Value((double)pos.z));
   val.Insert("Pos", nbtPos);
 
 
-  NBT_Value *nbtRot = new NBT_Value(NBT_Value::TAG_LIST, NBT_Value::TAG_FLOAT);
+  NBT_Value* nbtRot = new NBT_Value(NBT_Value::TAG_LIST, NBT_Value::TAG_FLOAT);
   nbtRot->GetList()->push_back(new NBT_Value((float)pos.yaw));
   nbtRot->GetList()->push_back(new NBT_Value((float)pos.pitch));
   val.Insert("Rotation", nbtRot);
 
 
-  NBT_Value *nbtMotion = new NBT_Value(NBT_Value::TAG_LIST, NBT_Value::TAG_DOUBLE);
+  NBT_Value* nbtMotion = new NBT_Value(NBT_Value::TAG_LIST, NBT_Value::TAG_DOUBLE);
   nbtMotion->GetList()->push_back(new NBT_Value((double)0.0));
   nbtMotion->GetList()->push_back(new NBT_Value((double)0.0));
   nbtMotion->GetList()->push_back(new NBT_Value((double)0.0));
@@ -411,159 +523,320 @@ bool User::saveData()
 
 }
 
-bool User::checkInventory(sint16 itemID, char count)
-{
-  int leftToFit = count;
-  for(uint8 i = 0; i < 36; i++)
-  {
-    if(inv.main[i].type == 0)
-      return true;
 
-    if(inv.main[i].type == itemID)
+bool User::updatePosM(double x, double y, double z, int map, double stance)
+{
+  if(map!=pos.map && logged)
+  {
+
+    //Loop every chunk loaded to make sure no user pointers are left!
+    for (int i=0;i<441;++i)
     {
-      if(64-inv.main[i].count >= leftToFit)
-        return true;
-      else if(64-inv.main[i].count > 0)
-        leftToFit -= 64-inv.main[i].count;
+      for (sChunkNode* node = Mineserver::get()->map(pos.map)->chunks.getBuckets()[i];node!=NULL;node=node->next)
+      {
+        node->chunk->users.erase(this);
+        if (node->chunk->users.size() == 0)
+        {
+          Mineserver::get()->map(pos.map)->releaseMap(node->chunk->x, node->chunk->z);
+        }
+      }
+    }
+
+    // TODO despawn players who are no longer in view
+    // TODO despawn self to players on last world
+    pos.map = map;
+    pos.x = x; pos.y = y; pos.z = z;
+    std::cout << map << "world changing" <<std::endl;
+    clearLoadingMap();
+    // TODO spawn self to nearby players
+    // TODO spawn players who are NOW in view
+    return false;
+  }
+  updatePos(x,y,z,stance);
+  pushMap();
+
+  return true;
+}
+
+void User::clearLoadingMap()
+{
+  for(int i = mapQueue.size(); i > 0 ; i--)
+  {
+    mapQueue.erase(mapQueue.begin()+i);
+  }
+  for(int i = mapKnown.size() ; i >= 0; i--)
+  {
+    addRemoveQueue(mapKnown[i].x(), mapKnown[i].z());
+  }
+  popMap();
+  //  buffer << (int8_t)PACKET_LOGIN_RESPONSE << (int32_t)UID << std::string("") << std::string("") << (int64_t)0 << (int8_t)-1;
+
+
+  buffer << (int8_t)PACKET_SPAWN_POSITION << (int32_t)pos.x << ((int32_t)pos.y+2) << (int32_t)pos.z;
+  for(int x = -viewDistance; x <= viewDistance; x++)
+  {
+    for(int z = -viewDistance; z <= viewDistance; z++)
+    {
+      addQueue((int32_t)pos.x/16+x, (int32_t)pos.z/16+z);
     }
   }
-  return false;
+  // Push chunks to user
+  pushMap(); pushMap();
+  //Inventory
+  for(int i=1; i<45; i++)
+  {
+    if(inv[i].type != -1 && inv[i].count)
+    {
+      buffer << (int8_t)PACKET_SET_SLOT << (int8_t)0 << (int16_t)(i) << (int16_t)inv[i].type << (int8_t)(inv[i].count) << (int16_t)inv[i].health;
+    }
+  }
+
+
+  buffer << (int8_t)PACKET_TIME_UPDATE << (int64_t)Mineserver::get()->map(pos.map)->mapTime;
+  pushMap();pushMap();pushMap();pushMap();pushMap();
+  spawnUser((int32_t)pos.x*32, ((int32_t)pos.y+2)*32, (int32_t)pos.z*32);
+  // Spawn other users for connected user
+  spawnOthers();
+
+  buffer << (int8_t)PACKET_PLAYER_POSITION_AND_LOOK << (double)pos.x << (double)pos.y << (double)pos.stance << (double)pos.z
+         << (float)pos.yaw << (float)pos.pitch << (int8_t)(double)1;
+  teleport(pos.x,pos.y,pos.z);
 }
+
+
 
 bool User::updatePos(double x, double y, double z, double stance)
 {
-  //Riding on a minecart?
-  if(y==-999)
+
+  // Riding other entity?
+  if (y==-999)
   {
-    //attachedTo
-    //ToDo: Get pos from minecart
+    // attachedTo
+    // ToDo: Get pos from minecart/player/boat
     return false;
   }
 
-  if(nick.size() && logged)
+  if (logged)
   {
-    //Do we send relative or absolute move values
-    if(0)  //abs(x-this->pos.x)<127
-           //&& abs(y-this->pos.y)<127
-           //&& abs(z-this->pos.z)<127)
+    sChunk* newChunk = Mineserver::get()->map(pos.map)->loadMap(blockToChunk((int32_t)x), blockToChunk((int32_t)z));
+    sChunk* oldChunk = Mineserver::get()->map(pos.map)->loadMap(blockToChunk((int32_t)pos.x), blockToChunk((int32_t)pos.z));
+
+    if (!newChunk || !oldChunk)
     {
-      uint8 movedata[8];
-      movedata[0] = 0x1f; //Relative move
-      putSint32(&movedata[1], (sint32)this->UID);
-      movedata[5] = (char)(x-this->pos.x);
-      movedata[6] = (char)(y-this->pos.y);
-      movedata[7] = (char)(z-this->pos.z);
-      this->sendOthers(&movedata[0], 8);
+      LOG(WARNING, "user", "failed to update user position");
+      return false;
+    }
+
+    if (newChunk == oldChunk)
+    {
+      Packet telePacket;
+      telePacket << (int8_t)PACKET_ENTITY_TELEPORT
+                 << (int32_t)UID << (int32_t)(x * 32) << (int32_t)(y * 32) 
+                 << (int32_t)(z * 32) << angleToByte(pos.yaw) << angleToByte(pos.pitch);
+      newChunk->sendPacket(telePacket, this);
+    }    
+    else if (abs(newChunk->x - oldChunk->x) <= 1  && abs(newChunk->z - oldChunk->z) <= 1)
+    {
+      
+      std::list<User*> toremove;
+      std::list<User*> toadd;
+
+      sChunk::userBoundary(oldChunk, toremove, newChunk, toadd);
+
+      if (toremove.size())
+      {
+        Packet pkt;
+        pkt << (int8_t)PACKET_DESTROY_ENTITY << (int32_t)UID;
+        std::list<User*>::iterator iter = toremove.begin(), end = toremove.end();
+        for ( ; iter != end ; iter++)
+        {
+          (*iter)->buffer.addToWrite(pkt.getWrite(), pkt.getWriteLen());
+        }
+      }
+
+      if (toadd.size())
+      {
+        Packet pkt;
+        pkt << (int8_t)PACKET_NAMED_ENTITY_SPAWN << (int32_t)UID << nick
+            << (int32_t)(x * 32) << (int32_t)(y * 32) << (int32_t)(z * 32)
+            << angleToByte(pos.yaw) << angleToByte(pos.pitch) << (int16_t)curItem;
+
+        std::list<User*>::iterator iter = toadd.begin(), end = toadd.end();
+        for ( ; iter != end ; iter++)
+        {
+          if ((*iter) != this)
+          {
+            (*iter)->buffer.addToWrite(pkt.getWrite(), pkt.getWriteLen());
+          }
+        }
+      }
+
+      // TODO: Determine those who where present for both.
+      Packet telePacket;
+      telePacket << (int8_t)PACKET_ENTITY_TELEPORT
+                 << (int32_t)UID << (int32_t)(x * 32) << (int32_t)(y * 32) << (int32_t)(z * 32) 
+                 << angleToByte(pos.yaw) << angleToByte(pos.pitch);
+      newChunk->sendPacket(telePacket, this);
+      
+      int chunkDiffX = newChunk->x - oldChunk->x;
+      int chunkDiffZ = newChunk->z - oldChunk->z;
+
+      // Send new chunk and clear old chunks
+      for (int mapx = newChunk->x-viewDistance; mapx <= newChunk->x+viewDistance; mapx++)
+      {
+        for (int mapz = newChunk->z-viewDistance; mapz <= newChunk->z+viewDistance; mapz++)
+        {
+          if (!withinViewDistance((mapx - chunkDiffX), newChunk->x) || !withinViewDistance((mapz - chunkDiffZ), newChunk->z))
+          {
+            addRemoveQueue(mapx-chunkDiffX, mapz-chunkDiffZ);
+          }
+
+          // If this chunk wasn't in the view distance before
+          // if (!withinViewDistance(chunkDiffX, oldChunk->x) || !withinViewDistance(chunkDiffZ, oldChunk->z))
+          //{
+          
+          // This will remove the chunks from being removed if they were put to the remove queue.
+          addQueue(mapx, mapz);
+          
+          
+          //}
+        }
+      }
     }
     else
     {
-      this->pos.x      = x;
-      this->pos.y      = y;
-      this->pos.z      = z;
-      this->pos.stance = stance;
+      std::set<User*> toRemove;
+      std::set<User*> toAdd;
 
-      // Fix yaw & pitch to be a 1 byte fraction of 360 (no negatives)
-      int fixedYaw = int(this->pos.yaw) % 360;
-      if(fixedYaw < 0)
-        fixedYaw = 360 + fixedYaw;
-      fixedYaw = int(float(fixedYaw) * float(255.0f/360.0f));
-
-      int fixedPitch = int(this->pos.pitch) % 360;
-      if(fixedPitch < 0)
-        fixedPitch = 360 + fixedPitch;
-      fixedPitch = int(float(fixedPitch) * float(255.0f/360.0f));
-
-      uint8 teleportData[19];
-      teleportData[0]  = PACKET_ENTITY_TELEPORT;
-      putSint32(&teleportData[1], this->UID);
-      putSint32(&teleportData[5], (int)(this->pos.x*32));
-      putSint32(&teleportData[9], (int)(this->pos.y*32));
-      putSint32(&teleportData[13], (int)(this->pos.z*32));
-      teleportData[17] = (char)fixedYaw;
-      teleportData[18] = (char)fixedPitch;
-      this->sendOthers(&teleportData[0], 19);
-    }
-
-    //Check if there are items in this chunk!
-    sint32 chunk_x = blockToChunk((sint32)x);
-    sint32 chunk_z = blockToChunk((sint32)z);
-    uint32 chunkHash;
-    Map::get()->posToId(chunk_x, chunk_z, &chunkHash);
-    if(Map::get()->mapItems.count(chunkHash))
-    {
-      //Loop through items and check if they are close enought to be picked up
-      for(sint32 i = Map::get()->mapItems[chunkHash].size()-1; i >= 0; i--)
+      int chunkDiffX = newChunk->x - oldChunk->x;
+      int chunkDiffZ = newChunk->z - oldChunk->z;
+      for (int mapx = newChunk->x-viewDistance; mapx <= newChunk->x+viewDistance; mapx++)
       {
-        //No more than 2 blocks away
-        if(abs((sint32)x-Map::get()->mapItems[chunkHash][i]->pos.x()/32) < 2 &&
-           abs((sint32)z-Map::get()->mapItems[chunkHash][i]->pos.z()/32) < 2 &&
-           abs((sint32)y-Map::get()->mapItems[chunkHash][i]->pos.y()/32) < 2)
+        for (int mapz = newChunk->z-viewDistance; mapz <= newChunk->z+viewDistance; mapz++)
         {
-          //Dont pickup own spawns right away
-          if(Map::get()->mapItems[chunkHash][i]->spawnedBy != this->UID ||
-             Map::get()->mapItems[chunkHash][i]->spawnedAt+2 < time(0))
+          if (!withinViewDistance(chunkDiffX, oldChunk->x) || !withinViewDistance(chunkDiffZ, oldChunk->z))
           {
-            //Check player inventory for space!
-            if(checkInventory(Map::get()->mapItems[chunkHash][i]->item,
-                              Map::get()->mapItems[chunkHash][i]->count))
+            addQueue(mapx, mapz);
+            sChunk* chunk = Mineserver::get()->map(pos.map)->chunks.getChunk(mapx, mapz);
+
+            if (chunk != NULL)
             {
-              //Send player collect item packet
-              uint8 *packet = new uint8[9];
-              packet[0] = PACKET_COLLECT_ITEM;
-              putSint32(&packet[1], Map::get()->mapItems[chunkHash][i]->EID);
-              putSint32(&packet[5], this->UID);
-        buffer.addToWrite(packet, 9);
+              toAdd.insert(chunk->users.begin(), chunk->users.end());
+            }
+          }
 
-              //Send everyone destroy_entity-packet
-              packet[0] = PACKET_DESTROY_ENTITY;
-              putSint32(&packet[1], Map::get()->mapItems[chunkHash][i]->EID);
-              //ToDo: Only send users in range
-              this->sendAll(packet, 5);
+          if (!withinViewDistance((mapx - chunkDiffX), newChunk->x) || !withinViewDistance((mapz - chunkDiffZ), newChunk->z))
+          {
+            addRemoveQueue(mapx-chunkDiffX, mapz-chunkDiffZ);
 
-              packet[0] = PACKET_ADD_TO_INVENTORY;
-              putSint16(&packet[1], Map::get()->mapItems[chunkHash][i]->item);
-              packet[3] = Map::get()->mapItems[chunkHash][i]->count;
-              putSint16(&packet[4], Map::get()->mapItems[chunkHash][i]->health);
+            sChunk* chunk = Mineserver::get()->map(pos.map)->chunks.getChunk((mapx - chunkDiffX), (mapz - chunkDiffZ));
 
-        buffer.addToWrite(packet, 6);
-
-              //We're done, release packet memory
-              delete[] packet;
-
-
-              Map::get()->items.erase(Map::get()->mapItems[chunkHash][i]->EID);
-              delete Map::get()->mapItems[chunkHash][i];
-              Map::get()->mapItems[chunkHash].erase(Map::get()->mapItems[chunkHash].begin()+i);
+            if (chunk != NULL)
+            {
+              toRemove.insert(chunk->users.begin(), chunk->users.end());
             }
           }
         }
       }
-    }
 
-
-    //Chunk position changed, check for map updates
-    if((int)(x/16) != curChunk.x() || (int)(z/16) != curChunk.z())
-    {
-      //This is not accurate chunk!!
-      curChunk.x() = (int)(x/16);
-      curChunk.z() = (int)(z/16);
-
-      for(int mapx = -viewDistance+curChunk.x(); mapx <= viewDistance+curChunk.x(); mapx++)
+      std::set<User*> toTeleport;
+      std::set<User*>::iterator iter = toRemove.begin(), end = toRemove.end();
+      for ( ; iter != end ; iter++ )
       {
-        for(int mapz = -viewDistance+curChunk.z(); mapz <= viewDistance+curChunk.z(); mapz++)
+        std::set<User*>::iterator result = toAdd.find(*iter);
+        if (result != toAdd.end())
         {
-          addQueue(mapx, mapz);
+          toTeleport.insert(*iter);
+          toAdd.erase(result);
+
+  #ifdef _MSC_VER
+          iter = toRemove.erase(iter);
+  #else
+          // TODO: Optimise
+          toRemove.erase(iter);
+          iter = toRemove.begin();
+  #endif
+          end = toRemove.end();
+          if (iter == end)
+            break;
         }
       }
 
-      for(unsigned int i = 0; i < mapKnown.size(); i++)
+      Packet destroyPkt;
+      destroyPkt << (int8_t)PACKET_DESTROY_ENTITY << (int32_t)UID;
+
+      Packet spawnPkt;
+      spawnPkt << (int8_t)PACKET_NAMED_ENTITY_SPAWN << (int32_t)UID << nick
+               << (int32_t)(x * 32) << (int32_t)(y * 32) << (int32_t)(z * 32) << angleToByte(pos.yaw) << angleToByte(pos.pitch) << (int16_t)curItem;
+
+      Packet telePacket;
+      telePacket << (int8_t)PACKET_ENTITY_TELEPORT
+                 << (int32_t)UID << (int32_t)(x * 32) << (int32_t)(y * 32) << (int32_t)(z * 32) << angleToByte(pos.yaw) << angleToByte(pos.pitch);
+
+      toTeleport.erase(this);
+      toAdd.erase(this);
+      toRemove.erase(this);
+
+      iter = toRemove.begin(); end = toRemove.end();
+      for ( ; iter != end ; iter++ )
       {
-        //If client has map data more than viesDistance+1 chunks away, remove it
-        if(mapKnown[i].x() < curChunk.x()-viewDistance-1 ||
-           mapKnown[i].x() > curChunk.x()+viewDistance+1 ||
-           mapKnown[i].z() < curChunk.z()-viewDistance-1 ||
-           mapKnown[i].z() > curChunk.z()+viewDistance+1)
-          addRemoveQueue(mapKnown[i].x(), mapKnown[i].z());
+        (*iter)->buffer.addToWrite(destroyPkt.getWrite(), destroyPkt.getWriteLen());
+      }
+
+      iter = toAdd.begin(); end = toAdd.end();
+      for ( ; iter != end ; iter++ )
+      {
+        (*iter)->buffer.addToWrite(spawnPkt.getWrite(), spawnPkt.getWriteLen());
+      }
+
+      iter = toTeleport.begin(); end = toTeleport.end();
+      for ( ; iter != end ; iter++ )
+      {
+        (*iter)->buffer.addToWrite(telePacket.getWrite(), telePacket.getWriteLen());
+      }
+    }
+
+
+    if (newChunk->items.size())
+    {
+      // Loop through items and check if they are close enought to be picked up
+      std::vector<spawnedItem*>::iterator iter = newChunk->items.begin(), end = newChunk->items.end();
+      for (;iter!=end;++iter)
+      {
+        // No more than 2 blocks away
+        if ( abs((int32_t)x-((*iter)->pos.x()/32)) < 2 &&
+             abs((int32_t)y-((*iter)->pos.y()/32)) < 2 &&
+             abs((int32_t)z-((*iter)->pos.z()/32)) < 2)
+        {
+          // Dont pickup own spawns right away
+          if ((*iter)->spawnedBy != this->UID || (*iter)->spawnedAt+2 < time(NULL))
+          {
+            // Check player inventory for space!
+            if (Mineserver::get()->inventory()->isSpace(this,(*iter)->item,(*iter)->count))
+            {
+              // Send player collect item packet
+              buffer << (int8_t)PACKET_COLLECT_ITEM << (int32_t)(*iter)->EID << (int32_t)UID;
+
+              // Send everyone destroy_entity-packet
+              Packet pkt;
+              pkt << (int8_t)PACKET_DESTROY_ENTITY << (int32_t)(*iter)->EID;
+              newChunk->sendPacket(pkt);
+
+              // Add items to inventory
+              Mineserver::get()->inventory()->addItems(this,(*iter)->item,(*iter)->count, (*iter)->health);
+
+              Mineserver::get()->map(pos.map)->items.erase((*iter)->EID);
+              delete *iter;
+              iter = newChunk->items.erase(iter);
+              end = newChunk->items.end();
+
+              if (iter == end)
+              {
+                break;
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -572,130 +845,138 @@ bool User::updatePos(double x, double y, double z, double stance)
   this->pos.y      = y;
   this->pos.z      = z;
   this->pos.stance = stance;
+  curChunk.x() = (int)(x/16);
+  curChunk.z() = (int)(z/16);
+
   return true;
 }
 
-bool User::checkOnBlock(sint32 x, sint8 y, sint32 z)
+bool User::checkOnBlock(int32_t x, int8_t y, int32_t z)
 {
    double diffX = x - this->pos.x;
    double diffZ = z - this->pos.z;
 
    if ((y == (int)this->pos.y)
-         && (diffZ > -1.3 && diffZ < 0.3)
-         && (diffX > -1.3 && diffX < 0.3))
+          && (diffZ > -1.3 && diffZ < 0.3)
+          && (diffX > -1.3 && diffX < 0.3))
       return true;
    return false;
 }
 
 bool User::updateLook(float yaw, float pitch)
 {
-  // Fix yaw & pitch to be a 1 byte fraction of 360 (no negatives)
-  int fixedYaw = int(yaw) % 360;
-  if(fixedYaw < 0)
-    fixedYaw = 360 + fixedYaw;
-  fixedYaw = int(float(fixedYaw) * float(255.0f/360.0f));
+  Packet pkt;
+  pkt << (int8_t)PACKET_ENTITY_LOOK << (int32_t)UID << angleToByte(yaw) << angleToByte(pitch);
 
-  int fixedPitch = int(pitch) % 360;
-  if(fixedPitch < 0)
-    fixedPitch = 360 + fixedPitch;
-  fixedPitch = int(float(fixedPitch) * float(255.0f/360.0f));
-
-  uint8 lookdata[7];
-  lookdata[0] = PACKET_ENTITY_LOOK;
-  putSint32(&lookdata[1], (sint32)this->UID);
-  lookdata[5] = (char)(fixedYaw);
-  lookdata[6] = (char)(fixedPitch);
-  this->sendOthers(&lookdata[0], 7);
+  sChunk* chunk = Mineserver::get()->map(pos.map)->chunks.getChunk(blockToChunk((int32_t)pos.x),blockToChunk((int32_t)pos.z));
+  if(chunk != NULL)
+  {
+    chunk->sendPacket(pkt, this);
+  }
 
   this->pos.yaw   = yaw;
   this->pos.pitch = pitch;
   return true;
 }
 
-bool User::sendOthers(uint8 *data, uint32 len)
+bool User::sendOthers(uint8_t* data, uint32_t len)
 {
-  for(unsigned int i = 0; i < Mineserver::get().users().size(); i++)
+  for (unsigned int i = 0; i < Mineserver::get()->users().size(); i++)
   {
-    if(Mineserver::get().users()[i]->fd != this->fd && Mineserver::get().users()[i]->logged)
+    if (Mineserver::get()->users()[i]->fd != this->fd && Mineserver::get()->users()[i]->logged)
     {
       // Don't send to his user if he is DND and the message is a chat message
-      if(!(Mineserver::get().users()[i]->dnd && data[0] == PACKET_CHAT_MESSAGE))
+      if (!(Mineserver::get()->users()[i]->dnd && data[0] == PACKET_CHAT_MESSAGE))
       {
-    	  Mineserver::get().users()[i]->buffer.addToWrite(data, len);
-  	  }
-  	}
+        Mineserver::get()->users()[i]->buffer.addToWrite(data, len);
+      }
+    }
   }
   return true;
 }
 
-sint8 User::relativeToBlock(const sint32 x, const sint8 y, const sint32 z)
+int8_t User::relativeToBlock(const int32_t x, const int8_t y, const int32_t z)
 {
-   sint8 direction;
-   signed short diffX, diffZ;
+   int8_t direction;
+   double diffX, diffZ;
    diffX = x - this->pos.x;
    diffZ = z - this->pos.z;
 
    if (diffX > diffZ)
    {
      // We compare on the x axis
-     if (diffX > 0) {
+     if (diffX > 0)
+     {
        direction = BLOCK_BOTTOM;
-     } else {
+     }
+     else
+     {
        direction = BLOCK_EAST;
      }
-   } else {
+   }
+   else
+   {
      // We compare on the z axis
-     if (diffZ > 0) {
+     if (diffZ > 0)
+     {
        direction = BLOCK_SOUTH;
-     } else {
+     }
+     else
+     {
        direction = BLOCK_NORTH;
      }
    }
    return direction;
 }
 
-bool User::sendAll(uint8 *data, uint32 len)
+bool User::sendAll(uint8_t* data, uint32_t len)
 {
-  for(unsigned int i = 0; i < Mineserver::get().users().size(); i++)
+  for (unsigned int i = 0; i < Mineserver::get()->users().size(); i++)
   {
-    if(Mineserver::get().users()[i]->fd && Mineserver::get().users()[i]->logged)
+    if (Mineserver::get()->users()[i]->fd && Mineserver::get()->users()[i]->logged)
     {
       // Don't send to his user if he is DND and the message is a chat message
-      if(!(Mineserver::get().users()[i]->dnd && data[0] == PACKET_CHAT_MESSAGE))
+      if (!(Mineserver::get()->users()[i]->dnd && data[0] == PACKET_CHAT_MESSAGE))
       {
-    	  Mineserver::get().users()[i]->buffer.addToWrite(data, len);
-  	  }
-  	}
+        Mineserver::get()->users()[i]->buffer.addToWrite(data, len);
+      }
+    }
   }
   return true;
 }
 
-bool User::sendAdmins(uint8 *data, uint32 len)
+bool User::sendAdmins(uint8_t* data, uint32_t len)
 {
-  for(unsigned int i = 0; i < Mineserver::get().users().size(); i++)
+  for (unsigned int i = 0; i < Mineserver::get()->users().size(); i++)
   {
-    if(Mineserver::get().users()[i]->fd && Mineserver::get().users()[i]->logged && IS_ADMIN(Mineserver::get().users()[i]->permissions))
-    	Mineserver::get().users()[i]->buffer.addToWrite(data, len);
+    if (Mineserver::get()->users()[i]->fd && Mineserver::get()->users()[i]->logged && IS_ADMIN(Mineserver::get()->users()[i]->permissions))
+    {
+      Mineserver::get()->users()[i]->buffer.addToWrite(data, len);
+    }
   }
   return true;
 }
 
-bool User::sendOps(uint8 *data, uint32 len)
+bool User::sendOps(uint8_t* data, uint32_t len)
 {
-  for(unsigned int i = 0; i < Mineserver::get().users().size(); i++)
+  for (unsigned int i = 0; i < Mineserver::get()->users().size(); i++)
   {
-    if(Mineserver::get().users()[i]->fd && Mineserver::get().users()[i]->logged && IS_ADMIN(Mineserver::get().users()[i]->permissions))
-    	Mineserver::get().users()[i]->buffer.addToWrite(data, len);
+    if (Mineserver::get()->users()[i]->fd && Mineserver::get()->users()[i]->logged && IS_ADMIN(Mineserver::get()->users()[i]->permissions))
+    {
+      Mineserver::get()->users()[i]->buffer.addToWrite(data, len);
+    }
   }
   return true;
 }
 
-bool User::sendGuests(uint8 *data, uint32 len)
+bool User::sendGuests(uint8_t* data, uint32_t len)
 {
-  for(unsigned int i = 0; i < Mineserver::get().users().size(); i++)
+  for (unsigned int i = 0; i < Mineserver::get()->users().size(); i++)
   {
-    if(Mineserver::get().users()[i]->fd && Mineserver::get().users()[i]->logged && IS_ADMIN(Mineserver::get().users()[i]->permissions))
-    	Mineserver::get().users()[i]->buffer.addToWrite(data, len);
+    if (Mineserver::get()->users()[i]->fd && Mineserver::get()->users()[i]->logged && IS_ADMIN(Mineserver::get()->users()[i]->permissions))
+    {
+      Mineserver::get()->users()[i]->buffer.addToWrite(data, len);
+    }
   }
   return true;
 }
@@ -704,18 +985,32 @@ bool User::addQueue(int x, int z)
 {
   vec newMap(x, 0, z);
 
-  for(unsigned int i = 0; i < mapQueue.size(); i++)
+  // Make sure this chunk is not being removed, if it is, delete it from remove queue
+  for (unsigned int i = 0; i < mapRemoveQueue.size(); i++)
   {
-    // Check for duplicates
-    if(mapQueue[i].x() == newMap.x() && mapQueue[i].z() == newMap.z())
-      return false;
+    if (mapRemoveQueue[i].x() == newMap.x() && mapRemoveQueue[i].z() == newMap.z())
+    {
+      mapRemoveQueue.erase(mapRemoveQueue.begin()+i);
+      break;
+    }
   }
 
-  for(unsigned int i = 0; i < mapKnown.size(); i++)
+  for (unsigned int i = 0; i < mapQueue.size(); i++)
   {
-    //Check for duplicates
-    if(mapKnown[i].x() == newMap.x() && mapKnown[i].z() == newMap.z())
+    // Check for duplicates
+    if (mapQueue[i].x() == newMap.x() && mapQueue[i].z() == newMap.z())
+    {
       return false;
+    }
+  }
+
+  for (unsigned int i = 0; i < mapKnown.size(); i++)
+  {
+    // Check for duplicates
+    if (mapKnown[i].x() == newMap.x() && mapKnown[i].z() == newMap.z())
+    {
+      return false;
+    }
   }
 
   this->mapQueue.push_back(newMap);
@@ -735,6 +1030,13 @@ bool User::addRemoveQueue(int x, int z)
 bool User::addKnown(int x, int z)
 {
   vec newMap(x, 0, z);
+  sChunk* chunk = Mineserver::get()->map(pos.map)->chunks.getChunk(x,z);
+  if(chunk == NULL)
+  {
+    return false;
+  }
+
+  chunk->users.insert(this);
   this->mapKnown.push_back(newMap);
 
   return true;
@@ -742,10 +1044,20 @@ bool User::addKnown(int x, int z)
 
 bool User::delKnown(int x, int z)
 {
-
-  for(unsigned int i = 0; i < mapKnown.size(); i++)
+  sChunk* chunk = Mineserver::get()->map(pos.map)->chunks.getChunk(x,z);
+  if(chunk != NULL)
   {
-    if(mapKnown[i].x() == x && mapKnown[i].z() == z)
+    chunk->users.erase(this);
+    // If no user needs this chunk
+    if (chunk->users.size() == 0)
+    {
+      Mineserver::get()->map(pos.map)->releaseMap(x,z);
+    }
+  }
+
+  for (unsigned int i = 0; i < mapKnown.size(); i++)
+  {
+    if (mapKnown[i].x() == x && mapKnown[i].z() == z)
     {
       mapKnown.erase(mapKnown.begin()+i);
       return true;
@@ -757,19 +1069,19 @@ bool User::delKnown(int x, int z)
 
 bool User::popMap()
 {
-  //If map in queue, push it to client
-  while(this->mapRemoveQueue.size())
+  // If map in queue, push it to client
+  while (this->mapRemoveQueue.size())
   {
-    //Pre chunk
-  buffer << (sint8)PACKET_PRE_CHUNK << (sint32)mapRemoveQueue[0].x() << (sint32)mapRemoveQueue[0].z() << (sint8)0;
+    // Pre chunk
+    buffer << (int8_t)PACKET_PRE_CHUNK << (int32_t)mapRemoveQueue[0].x() << (int32_t)mapRemoveQueue[0].z() << (int8_t)0;
 
-    //Delete from known list
+    // Delete from known list
     delKnown(mapRemoveQueue[0].x(), mapRemoveQueue[0].z());
 
-    //Remove from queue
+    // Remove from queue
     mapRemoveQueue.erase(mapRemoveQueue.begin());
 
-    //return true;
+    // return true;
   }
 
   return false;
@@ -778,32 +1090,32 @@ bool User::popMap()
 namespace
 {
 
-class DistanceComparator
-{
-private:
-  vec target;
-public:
-  DistanceComparator(vec tgt) : target(tgt)
+  class DistanceComparator
   {
-    target.y() = 0;
-  }
-  bool operator()(vec a, vec b) const
-  {
-    a.y() = 0;
-    b.y() = 0;
-    return vec::squareDistance(a, target) <
-           vec::squareDistance(b, target);
-  }
-};
+  private:
+    vec target;
+  public:
+    DistanceComparator(vec tgt) : target(tgt)
+    {
+      target.y() = 0;
+    }
+    bool operator()(vec a, vec b) const
+    {
+      a.y() = 0;
+      b.y() = 0;
+      return vec::squareDistance(a, target) <
+             vec::squareDistance(b, target);
+    }
+  };
 
 }
 
 bool User::pushMap()
 {
   //Dont send all at once
-  int maxcount = 10;
+  int maxcount = 30;
   // If map in queue, push it to client
-  while(this->mapQueue.size() > 0 && maxcount > 0)
+  while (this->mapQueue.size() > 0 && maxcount > 0)
   {
     maxcount--;
     // Sort by distance from center
@@ -812,7 +1124,7 @@ bool User::pushMap()
                static_cast<int>(pos.z / 16));
     sort(mapQueue.begin(), mapQueue.end(), DistanceComparator(target));
 
-    Map::get()->sendToUser(this, mapQueue[0].x(), mapQueue[0].z());
+    Mineserver::get()->map(pos.map)->sendToUser(this, mapQueue[0].x(), mapQueue[0].z());
 
     // Add this to known list
     addKnown(mapQueue[0].x(), mapQueue[0].z());
@@ -824,36 +1136,52 @@ bool User::pushMap()
   return true;
 }
 
-bool User::teleport(double x, double y, double z)
+bool User::teleport(double x, double y, double z, int map)
 {
-  buffer << (sint8)PACKET_PLAYER_POSITION_AND_LOOK << x << y << (double)0.0 << z
-    << (float)0.f << (float)0.f << (sint8)0;
+  if(map == -1)
+  {
+    map = pos.map;
+  }
+  if (y > 127.0)
+  {
+    y = 127.0;
+    LOGLF("Player Attempted to teleport with y > 127.0");
+  }
+  if(map==pos.map)
+  {
+    buffer << (int8_t)PACKET_PLAYER_POSITION_AND_LOOK << x << y << (double)0.0 << z
+           << (float)0.f << (float)0.f << (int8_t)1;
+  }
 
   //Also update pos for other players
-  updatePos(x, y, z, 0);
+  updatePosM(x, y, z, map, pos.stance);
+
+  pushMap();
   return true;
 }
 
 bool User::spawnUser(int x, int y, int z)
 {
   Packet pkt;
-  pkt << (sint8)PACKET_NAMED_ENTITY_SPAWN << (sint32)UID << nick
-    << (sint32)x << (sint32)y << (sint32)z << (sint8)0 << (sint8)0
-    << (sint16)0;
-  sendOthers((uint8*)pkt.getWrite(), pkt.getWriteLen());
+  pkt << (int8_t)PACKET_NAMED_ENTITY_SPAWN << (int32_t)UID << nick
+      << (int32_t)x << (int32_t)y << (int32_t)z << (int8_t)0 << (int8_t)0
+      << (int16_t)0;
+  sChunk*chunk = Mineserver::get()->map(pos.map)->chunks.getChunk(blockToChunk(x >> 5), blockToChunk(z >> 5));
+  if(chunk != NULL)
+    chunk->sendPacket(pkt, this);
   return true;
 }
 
 bool User::spawnOthers()
 {
 
-  for(unsigned int i = 0; i < Mineserver::get().users().size(); i++)
+  for (unsigned int i = 0; i < Mineserver::get()->users().size(); i++)
   {
-    if(Mineserver::get().users()[i]->UID != this->UID && Mineserver::get().users()[i]->nick != this->nick)
+    if (Mineserver::get()->users()[i]->logged && Mineserver::get()->users()[i]->UID != this->UID && Mineserver::get()->users()[i]->nick != this->nick)
     {
-    buffer << (sint8)PACKET_NAMED_ENTITY_SPAWN << (sint32)Mineserver::get().users()[i]->UID << Mineserver::get().users()[i]->nick
-      << (sint32)(Mineserver::get().users()[i]->pos.x * 32) << (sint32)(Mineserver::get().users()[i]->pos.y * 32) << (sint32)(Mineserver::get().users()[i]->pos.z * 32)
-      << (sint8)0 << (sint8)0 << (sint16)0;
+      buffer << (int8_t)PACKET_NAMED_ENTITY_SPAWN << (int32_t)Mineserver::get()->users()[i]->UID << Mineserver::get()->users()[i]->nick
+             << (int32_t)(Mineserver::get()->users()[i]->pos.x * 32) << (int32_t)(Mineserver::get()->users()[i]->pos.y * 32) << (int32_t)(Mineserver::get()->users()[i]->pos.z * 32)
+             << (int8_t)0 << (int8_t)0 << (int16_t)0;
     }
   }
   return true;
@@ -862,8 +1190,8 @@ bool User::spawnOthers()
 bool User::sethealth(int userHealth)
 {
   health = userHealth;
-  buffer << (sint8)PACKET_UPDATE_HEALTH << (sint8)userHealth;
-  //ToDo: Send destroy entity and spawn entity again
+  buffer << (int8_t)PACKET_UPDATE_HEALTH << (int16_t)userHealth;
+  // ToDo: Send destroy entity and spawn entity again
   return true;
 }
 
@@ -871,32 +1199,38 @@ bool User::respawn()
 {
   this->health = 20;
   this->timeUnderwater = 0;
-  buffer << (sint8)PACKET_RESPAWN;
+  buffer << (int8_t)PACKET_RESPAWN;
+  Packet destroyPkt;
+  destroyPkt << (int8_t)PACKET_DESTROY_ENTITY << (int32_t)UID;
+  sChunk *chunk = Mineserver::get()->map(pos.map)->getMapData(blockToChunk((int32_t)pos.x),blockToChunk((int32_t)pos.z));
+  if(chunk != NULL)
+  {
+    chunk->sendPacket(destroyPkt, this);
+  }
+
+  teleport(Mineserver::get()->map(pos.map)->spawnPos.x(), Mineserver::get()->map(pos.map)->spawnPos.y() + 2, Mineserver::get()->map(pos.map)->spawnPos.z(),0);
+
+  Packet spawnPkt;
+  spawnPkt << (int8_t)PACKET_NAMED_ENTITY_SPAWN << (int32_t)UID << nick
+            << (int32_t)(pos.x * 32) << (int32_t)(pos.y * 32) << (int32_t)(pos.z * 32) << angleToByte(pos.yaw) << angleToByte(pos.pitch) << (int16_t)curItem;
+
+  chunk = Mineserver::get()->map(pos.map)->getMapData(blockToChunk((int32_t)pos.x),blockToChunk((int32_t)pos.z));
+  if(chunk != NULL)
+  {
+    chunk->sendPacket(spawnPkt, this);
+  }
+
   return true;
 }
 
 bool User::dropInventory()
 {
-  for( int i = 0; i < 36; i++ )
+  for ( int i = 1; i < 45; i++ )
   {
-    if( inv.main[i].type != 0 )
+    if ( inv[i].type != -1 )
     {
-      Map::get()->createPickupSpawn((int)pos.x, (int)pos.y, (int)pos.z, inv.main[i].type, inv.main[i].count);
-      inv.main[i] = Item();
-    }
-
-    if( i >= 0 && i < 4 )
-    {
-      if( inv.equipped[i].type != 0 )
-      {
-        Map::get()->createPickupSpawn((int)pos.x, (int)pos.y, (int)pos.z, inv.equipped[i].type, inv.equipped[i].count);
-        inv.equipped[i] = Item();
-      }
-      if( inv.crafting[i].type != 0 )
-      {
-        Map::get()->createPickupSpawn((int)pos.x, (int)pos.y, (int)pos.z, inv.crafting[i].type, inv.crafting[i].count);
-        inv.crafting[i] = Item();
-      }
+      Mineserver::get()->map(pos.map)->createPickupSpawn((int)pos.x, (int)pos.y, (int)pos.z, inv[i].type, inv[i].count,inv[i].health,this);
+      inv[i] = Item();
     }
   }
   return true;
@@ -904,15 +1238,17 @@ bool User::dropInventory()
 
 bool User::isUnderwater()
 {
-   uint8 topblock, topmeta;
+   uint8_t topblock, topmeta;
    int y = ( pos.y - int(pos.y) <= 0.25 ) ? (int)pos.y + 1: (int)pos.y + 2;
 
-   Map::get()->getBlock((int)pos.x, y, (int)pos.z, &topblock, &topmeta);
+   Mineserver::get()->map(pos.map)->getBlock((int)pos.x, y, (int)pos.z, &topblock, &topmeta);
 
-   if( topblock == BLOCK_WATER || topblock == BLOCK_STATIONARY_WATER )
+   if ( topblock == BLOCK_WATER || topblock == BLOCK_STATIONARY_WATER )
    {
-      if( (timeUnderwater / 5) > 15 && timeUnderwater % 5 == 0 )// 13 is Trial and Erorr
+      if ( (timeUnderwater / 5) > 15 && timeUnderwater % 5 == 0 )// 13 is Trial and Erorr
+      {
         sethealth( health - 2 );
+      }
       timeUnderwater += 1;
       return true;
    }
@@ -921,46 +1257,50 @@ bool User::isUnderwater()
    return false;
 }
 
-struct event *User::GetEvent()
+struct event* User::GetEvent()
 {
   return &m_event;
 }
 
-std::vector<User *> & User::all()
+std::vector<User*>& User::all()
 {
-  return Mineserver::get().users();
+  return Mineserver::get()->users();
 }
 
 bool User::isUser(int sock)
 {
-  uint8 i;
-  for(i = 0; i < Mineserver::get().users().size(); i++)
+  uint8_t i;
+  for (i = 0; i < Mineserver::get()->users().size(); i++)
   {
-    if(Mineserver::get().users()[i]->fd == sock)
+    if (Mineserver::get()->users()[i]->fd == sock)
+    {
       return true;
+    }
   }
   return false;
 }
 
-//Not case-sensitive search
+// Not case-sensitive search
 User* User::byNick(std::string nick)
 {
   // Get coordinates
-  for(unsigned int i = 0; i < Mineserver::get().users().size(); i++)
+  for (unsigned int i = 0; i < Mineserver::get()->users().size(); i++)
   {
-    if(strToLower(Mineserver::get().users()[i]->nick) == strToLower(nick))
-      return Mineserver::get().users()[i];
+    if (strToLower(Mineserver::get()->users()[i]->nick) == strToLower(nick))
+    {
+      return Mineserver::get()->users()[i];
+    }
   }
   return NULL;
 }
 
 // Getter/Setter for item currently in hold
-sint16 User::currentItem()
+int16_t User::currentItemSlot()
 {
-  return m_currentItem;
+  return m_currentItemSlot;
 }
 
-void User::setCurrentItem(sint16 item_id)
+void User::setCurrentItemSlot(int16_t item_slot)
 {
-  m_currentItem = item_id;
+  m_currentItemSlot = item_slot;
 }

@@ -6,7 +6,7 @@ Also mail to developers@mineserver.be will reach us.
 
     Copyright (c) 2010, The Mineserver Project
 
-Custom Minecraft Alpha server software written in C++.
+Custom Minecraft Beta server software written in C++.
 
 ### == NOTICE ==
 Currently in (early) development. (Alpha stage)
@@ -43,10 +43,11 @@ Depends on (and tested with):
  [zlib 1.2.5](http://www.zlib.org)
  [libevent 1.4.14b](http://monkey.org/~provos/libevent/)
  [libnoise 1.0](http://libnoise.sourceforge.net/)
+ ncurses/pdcurses
 
  * Installing on Debian and Ubuntu: (For Ubuntu libevent1 -> libevent-1.4-2)
 
-    `sudo apt-get install libevent1 libevent-dev zlib1g zlib1g-dev libnoise-dev`
+    `sudo apt-get install ncurses5 ncurses5-dev libevent1 libevent-dev zlib1g zlib1g-dev libnoise-dev`
 
  * Installing on CentOS and RHEL
 
@@ -58,11 +59,21 @@ Depends on (and tested with):
 
     `sudo pkg_add -r libevent`
 
+ * Installing on Mac OS X
+    * Install libevent using your favourite tool, e.g., homebrew, fink or macports.
+    * Installing libnoise can be painful. Howerver, there is a homebrew formular
+      on [krono's homebrew fork](http://github.com/krono/homebrew).
+
+    So for homebrew do
+    
+    `brew install libevent libnoise`
+
+
 **Compiling using linux (make & gcc):**
 
  * Download and extract source or use `git clone git://github.com/fador/mineserver.git`
  * Go to mineserver/src/ directory
- * Run `make`
+ * Run `make` or `make DEBIAN=1` for Debian/Ubuntu
  * Run server with `./mineserver`
 
 **Compiling using FreeBSD / PCBSD (gmake & g++):**
@@ -86,6 +97,5 @@ Depends on (and tested with):
 
     call "%VS100COMNTOOLS%vsvars32.bat"
     cl /I"ZLIB_INC_DIR;LIBEVENT_INC_DIR" /W3 /WX- /O2 /D ZLIB_WINAPI /D WIN32 /D NDEBUG /D _CRT_SECURE_NO_WARNINGS /EHsc *.cpp zlibwapi.lib libevent.lib Ws2_32.lib /link /OUT:mineserver.exe /LIBPATH:"ZLIB_LIB_DIR;LIBEVENT_LIB_DIR"
-
 
 

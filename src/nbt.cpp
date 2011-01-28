@@ -1,29 +1,29 @@
 /*
-   Copyright (c) 2010, The Mineserver Project
-   All rights reserved.
+  Copyright (c) 2011, The Mineserver Project
+  All rights reserved.
 
-   Redistribution and use in source and binary forms, with or without
-   modification, are permitted provided that the following conditions are met:
- * Redistributions of source code must retain the above copyright
-      notice, this list of conditions and the following disclaimer.
- * Redistributions in binary form must reproduce the above copyright
-      notice, this list of conditions and the following disclaimer in the
-      documentation and/or other materials provided with the distribution.
- * Neither the name of the The Mineserver Project nor the
-      names of its contributors may be used to endorse or promote products
-      derived from this software without specific prior written permission.
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are met:
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in the
+    documentation and/or other materials provided with the distribution.
+  * Neither the name of the The Mineserver Project nor the
+    names of its contributors may be used to endorse or promote products
+    derived from this software without specific prior written permission.
 
-   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-   ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-   WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-   DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY
-   DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-   (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-   LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-   ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+  ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+  WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY
+  DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+  ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
 
 #include <iostream>
 #include <fstream>
@@ -48,6 +48,9 @@
 
 #include "tools.h"
 #include "nbt.h"
+#include "constants.h"
+
+
 
 //NBT level file reading
 //More info: http://www.minecraft.net/docs/NBT.txt
@@ -59,22 +62,22 @@ NBT_Value::NBT_Value(eTAG_Type type, eTAG_Type listType) : m_type(type)
     m_value.listVal.type = listType;
 }
 
-NBT_Value::NBT_Value(sint8 value) : m_type(TAG_BYTE)
+NBT_Value::NBT_Value(int8_t value) : m_type(TAG_BYTE)
 {
   m_value.byteVal = value;
 }
 
-NBT_Value::NBT_Value(sint16 value) : m_type(TAG_SHORT)
+NBT_Value::NBT_Value(int16_t value) : m_type(TAG_SHORT)
 {
   m_value.shortVal = value;
 }
 
-NBT_Value::NBT_Value(sint32 value) : m_type(TAG_INT)
+NBT_Value::NBT_Value(int32_t value) : m_type(TAG_INT)
 {
   m_value.intVal = value;
 }
 
-NBT_Value::NBT_Value(sint64 value) : m_type(TAG_LONG)
+NBT_Value::NBT_Value(int64_t value) : m_type(TAG_LONG)
 {
   m_value.longVal = value;
 }
@@ -89,9 +92,14 @@ NBT_Value::NBT_Value(double value) : m_type(TAG_DOUBLE)
   m_value.doubleVal = value;
 }
 
-NBT_Value::NBT_Value(uint8 *buf, sint32 len) : m_type(TAG_BYTE_ARRAY)
+NBT_Value::NBT_Value(uint8_t *buf, int32_t len) : m_type(TAG_BYTE_ARRAY)
 {
-  m_value.byteArrayVal = new std::vector<uint8>(buf, buf + len);
+  m_value.byteArrayVal = new std::vector<uint8_t>(buf, buf + len);
+}
+
+NBT_Value::NBT_Value(std::vector<uint8_t> const &bytes) : m_type(TAG_BYTE_ARRAY)
+{
+  m_value.byteArrayVal = new std::vector<uint8_t>(bytes);
 }
 
 NBT_Value::NBT_Value(const std::string &str) : m_type(TAG_STRING)
@@ -99,7 +107,7 @@ NBT_Value::NBT_Value(const std::string &str) : m_type(TAG_STRING)
   m_value.stringVal = new std::string(str);
 }
 
-NBT_Value::NBT_Value(eTAG_Type type, uint8 **buf, int &remaining) : m_type(type)
+NBT_Value::NBT_Value(eTAG_Type type, uint8_t **buf, int &remaining) : m_type(type)
 {
   switch(m_type)
   {
@@ -155,12 +163,12 @@ NBT_Value::NBT_Value(eTAG_Type type, uint8 **buf, int &remaining) : m_type(type)
     remaining -= 4;
     if(remaining >= 0)
     {
-      sint32 bufLen = getSint32(*buf);
+      int32_t bufLen = getSint32(*buf);
       remaining -= bufLen;
       *buf += 4;
       if(remaining >= 0)
       {
-        m_value.byteArrayVal = new std::vector<uint8>();
+        m_value.byteArrayVal = new std::vector<uint8_t>();
         m_value.byteArrayVal->assign(*buf, (*buf)+bufLen);
         *buf += bufLen;
       }
@@ -170,7 +178,7 @@ NBT_Value::NBT_Value(eTAG_Type type, uint8 **buf, int &remaining) : m_type(type)
     remaining -= 2;
     if(remaining >= 0)
     {
-      sint16 stringLen = getSint16(*buf);
+      int16_t stringLen = getSint16(*buf);
       remaining -= stringLen;
       *buf += 2;
       if(remaining >= 0)
@@ -184,10 +192,10 @@ NBT_Value::NBT_Value(eTAG_Type type, uint8 **buf, int &remaining) : m_type(type)
     remaining -= 5;
     if(remaining >= 0)
     {
-      sint8 type = **buf;
+      int8_t type = **buf;
       (*buf)++;
       m_value.listVal.type = (eTAG_Type)type;
-      sint32 count = getSint32(*buf);
+      int32_t count = getSint32(*buf);
       *buf += 4;
       m_value.listVal.data = new std::vector<NBT_Value*>();
       if(count)
@@ -204,7 +212,7 @@ NBT_Value::NBT_Value(eTAG_Type type, uint8 **buf, int &remaining) : m_type(type)
     while(remaining > 0)
     {
       remaining--;
-      sint8 type = **buf;
+      int8_t type = **buf;
       (*buf)++;
       if(type == TAG_END)
         break;
@@ -213,7 +221,7 @@ NBT_Value::NBT_Value(eTAG_Type type, uint8 **buf, int &remaining) : m_type(type)
       if(remaining <= 0)
         break;
 
-      sint16 stringLen = getSint16(*buf);
+      int16_t stringLen = getSint16(*buf);
       *buf += 2;
 
       remaining -= stringLen;
@@ -269,36 +277,39 @@ void NBT_Value::Insert(const std::string &str, NBT_Value *val)
   if(m_value.compoundVal == 0)
     m_value.compoundVal = new std::map<std::string, NBT_Value*>();
 
+  if ((*m_value.compoundVal)[str] != 0)
+    delete (*m_value.compoundVal)[str];
+
   (*m_value.compoundVal)[str] = val;
 }
 
-NBT_Value::operator sint8()
+NBT_Value::operator int8_t()
 {
-  if(m_type != TAG_BYTE)
+  if(!this || m_type != TAG_BYTE)
     return 0;
 
   return m_value.byteVal;
 }
 
-NBT_Value::operator sint16()
+NBT_Value::operator int16_t()
 {
-  if(m_type != TAG_SHORT)
+  if(!this || m_type != TAG_SHORT)
     return 0;
 
   return m_value.shortVal;
 }
 
-NBT_Value::operator sint32()
+NBT_Value::operator int32_t()
 {
-  if(m_type != TAG_INT)
+  if(!this || m_type != TAG_INT)
     return 0;
 
   return m_value.intVal;
 }
 
-NBT_Value::operator sint64()
+NBT_Value::operator int64_t()
 {
-  if(m_type != TAG_LONG)
+  if(!this || m_type != TAG_LONG)
     return 0;
 
   return m_value.longVal;
@@ -306,7 +317,7 @@ NBT_Value::operator sint64()
 
 NBT_Value::operator float()
 {
-  if(m_type != TAG_FLOAT)
+  if(!this || m_type != TAG_FLOAT)
     return 0;
 
   return m_value.floatVal;
@@ -314,13 +325,13 @@ NBT_Value::operator float()
 
 NBT_Value::operator double()
 {
-  if(m_type != TAG_DOUBLE)
+  if(!this || m_type != TAG_DOUBLE)
     return 0;
 
   return m_value.doubleVal;
 }
 
-NBT_Value & NBT_Value::operator =(sint8 val)
+NBT_Value & NBT_Value::operator =(int8_t val)
 {
   cleanup();
   m_type = TAG_BYTE;
@@ -328,7 +339,7 @@ NBT_Value & NBT_Value::operator =(sint8 val)
   return *this;
 }
 
-NBT_Value & NBT_Value::operator =(sint16 val)
+NBT_Value & NBT_Value::operator =(int16_t val)
 {
   cleanup();
   m_type = TAG_SHORT;
@@ -336,7 +347,7 @@ NBT_Value & NBT_Value::operator =(sint16 val)
   return *this;
 }
 
-NBT_Value & NBT_Value::operator =(sint32 val)
+NBT_Value & NBT_Value::operator =(int32_t val)
 {
   cleanup();
   m_type = TAG_INT;
@@ -344,7 +355,7 @@ NBT_Value & NBT_Value::operator =(sint32 val)
   return *this;
 }
 
-NBT_Value & NBT_Value::operator =(sint64 val)
+NBT_Value & NBT_Value::operator =(int64_t val)
 {
   cleanup();
   m_type = TAG_LONG;
@@ -368,12 +379,12 @@ NBT_Value & NBT_Value::operator =(double val)
   return *this;
 }
 
-std::vector<uint8> *NBT_Value::GetByteArray()
+std::vector<uint8_t> *NBT_Value::GetByteArray()
 {
   if(m_type != TAG_BYTE_ARRAY)
     return NULL;
   if(m_value.byteArrayVal == NULL)
-    m_value.byteArrayVal = new std::vector<uint8>();
+    m_value.byteArrayVal = new std::vector<uint8_t>();
   return m_value.byteArrayVal;
 }
 
@@ -427,12 +438,12 @@ void NBT_Value::cleanup()
   if(m_type == TAG_LIST)
   {
     if(m_value.listVal.data != NULL)
-	{
+  {
       std::vector<NBT_Value*>::iterator iter = m_value.listVal.data->begin(), end = m_value.listVal.data->end();
       for( ; iter != end ; iter++)
         delete *iter;
       delete m_value.listVal.data;
-	}
+  }
   }
   if(m_type == TAG_COMPOUND)
   {
@@ -441,7 +452,7 @@ void NBT_Value::cleanup()
       std::map<std::string, NBT_Value*>::iterator iter = m_value.compoundVal->begin(), end = m_value.compoundVal->end();
       for( ; iter != end ; iter++ )
         delete iter->second;
-	  
+    
       delete m_value.compoundVal;
     }
   }
@@ -456,11 +467,31 @@ NBT_Value * NBT_Value::LoadFromFile(const std::string &filename)
   if(fp == NULL)
     return NULL;
   fseek(fp, -4, SEEK_END);
-  uint32 uncompressedSize = 0;
+  uint32_t uncompressedSize = 0;
   fread(&uncompressedSize, 4, 1, fp);
   fclose(fp);
 
-  uint8 *uncompressedData = new uint8[uncompressedSize];
+  //Do endian testing!
+  int32_t endiantestint=1; int8_t *endiantestchar=(int8_t*)&endiantestint;
+  if(*endiantestchar != 1)
+  {
+    //Swap order
+    int uncompressedSizeOld = uncompressedSize;
+    uint8_t *newpointer = reinterpret_cast<uint8_t*>(&uncompressedSize);     
+    uint8_t *oldpointer = reinterpret_cast<uint8_t *>(&uncompressedSizeOld);
+    newpointer[0] = oldpointer[3];
+    newpointer[1] = oldpointer[2];
+    newpointer[2] = oldpointer[1];
+    newpointer[3] = oldpointer[0];
+  }
+
+  if(uncompressedSize == 0)
+  {
+    std::cout << "Unable to determine uncompressed size of " << filename << std::endl;
+    uncompressedSize = ALLOCATE_NBTFILE;
+  }
+
+  uint8_t *uncompressedData = new uint8_t[uncompressedSize];
   gzFile nbtFile = gzopen(filename.c_str(), "rb");
   if(nbtFile == NULL)
   {
@@ -470,7 +501,7 @@ NBT_Value * NBT_Value::LoadFromFile(const std::string &filename)
   gzread(nbtFile, uncompressedData, uncompressedSize);
   gzclose(nbtFile);
 
-  uint8 *ptr = uncompressedData+3; // Jump blank compound
+  uint8_t *ptr = uncompressedData+3; // Jump blank compound
   int remaining = uncompressedSize;
 
   NBT_Value *root = new NBT_Value(TAG_COMPOUND, &ptr, remaining);
@@ -482,7 +513,7 @@ NBT_Value * NBT_Value::LoadFromFile(const std::string &filename)
 
 void NBT_Value::SaveToFile(const std::string &filename)
 {
-  std::vector<uint8> buffer;
+  std::vector<uint8_t> buffer;
   
   // Blank compound tag
   buffer.push_back(TAG_COMPOUND);
@@ -500,7 +531,7 @@ void NBT_Value::SaveToFile(const std::string &filename)
   gzclose(nbtFile);
 }
 
-void NBT_Value::Write(std::vector<uint8> &buffer)
+void NBT_Value::Write(std::vector<uint8_t> &buffer)
 {
   int storeAt = buffer.size();;
   switch(m_type)
@@ -542,7 +573,7 @@ void NBT_Value::Write(std::vector<uint8> &buffer)
     {
       int stringLen = m_value.stringVal ? m_value.stringVal->size() : 0;
       buffer.resize(storeAt + 2 + stringLen);
-      putSint16(&buffer[storeAt], (sint16)stringLen);
+      putSint16(&buffer[storeAt], (int16_t)stringLen);
       storeAt += 2;
       if(stringLen>0)
         memcpy(&buffer[storeAt], m_value.stringVal->c_str(), stringLen);
@@ -572,7 +603,7 @@ void NBT_Value::Write(std::vector<uint8> &buffer)
           NBT_Value *val = iter->second;
           int curPos = buffer.size();
           buffer.resize(curPos + 3 + keySize);
-          buffer[curPos] = (uint8)val->GetType();
+          buffer[curPos] = (uint8_t)val->GetType();
           curPos++;
           putSint16(&buffer[curPos], keySize);
           curPos += 2;
@@ -589,67 +620,82 @@ void NBT_Value::Write(std::vector<uint8> &buffer)
   }
 }
 
-void NBT_Value::Print(const std::string &name, int tabs)
+void NBT_Value::Dump(std::string& data, const std::string& name, int tabs)
 {
+  std::string tabPrefix = "";
   for(int i=0;i<tabs;i++)
-    std::cout << "  ";
+  {
+    tabPrefix += "  ";
+  }
+
   switch(m_type)
   {
   case TAG_END:
-    std::cout << "TAG_End(\"" << name << "\")" << std::endl;
+    data += tabPrefix + "TAG_End(\"" + name + "\")\n";
     break;
   case TAG_BYTE:
-    std::cout << "TAG_Byte(\"" << name << "\"): " << (int)m_value.byteVal << std::endl;
+    data += tabPrefix + "TAG_Byte(\"" + name + "\"): " + dtos((int)m_value.byteVal) + "\n";
     break;
   case TAG_SHORT:
-    std::cout << "TAG_Short(\"" << name << "\"): " << m_value.shortVal << std::endl;
+    data += tabPrefix + "TAG_Short(\"" + name + "\"): " + dtos(m_value.shortVal) + "\n";
     break;
   case TAG_INT:
-    std::cout << "TAG_Int(\"" << name << "\"): " << m_value.intVal << std::endl;
+    data += tabPrefix + "TAG_Int(\"" + name + "\"): " + dtos(m_value.intVal) + "\n";
     break;
   case TAG_LONG:
-    std::cout << "TAG_Long(\"" << name << "\"): " << m_value.longVal << std::endl;
+    data += tabPrefix + "TAG_Long(\"" + name + "\"): " + dtos(m_value.longVal) + "\n";
     break;
   case TAG_FLOAT:
-    std::cout << "TAG_Float(\"" << name << "\"): " << m_value.floatVal << std::endl;
+    data += tabPrefix + "TAG_Float(\"" + name + "\"): " + dtos(m_value.floatVal) + "\n";
     break;
   case TAG_DOUBLE:
-    std::cout << "TAG_Double(\"" << name << "\"): " << m_value.doubleVal << std::endl;
+    data += tabPrefix + "TAG_Double(\"" + name + "\"): " + dtos(m_value.doubleVal) + "\n";
     break;
   case TAG_BYTE_ARRAY:
-    std::cout << "TAG_Byte_Array(\"" << name << "\"): ";
+    data += tabPrefix + "TAG_Byte_Array(\"" + name + "\"): \n";
     if(m_value.byteArrayVal != NULL)
-      std::cout << m_value.byteArrayVal->size() << " bytes" << std::endl;
+    {
+      data += tabPrefix + dtos(m_value.byteArrayVal->size()) + " bytes\n";
+    }
     else
-      std::cout << "0 bytes" << std::endl;
+    {
+      data += tabPrefix + "0 bytes\n";
+    }
     break;
   case TAG_STRING:
-    std::cout << "TAG_String(\"" << name << "\"): ";
+    data += tabPrefix + "TAG_String(\"" + name + "\"): \n";
     if(m_value.stringVal != NULL)
-      std::cout << *m_value.stringVal << std::endl;
+    {
+      data += tabPrefix + *m_value.stringVal + "\n";
+    }
     else
-      std::cout << std::endl;
+    {
+      data += tabPrefix + "\n";
+    }
     break;
   case TAG_LIST:
-    std::cout << "TAG_List(\"" << name << "\"): Type " << m_value.listVal.type << std::endl;
+    data += tabPrefix + "TAG_List(\"" + name + "\"): Type " + dtos(m_value.listVal.type) + "\n";
     if(m_value.listVal.data != NULL)
     {
       std::vector<NBT_Value*>::iterator iter = m_value.listVal.data->begin(), end = m_value.listVal.data->end();
       for( ; iter != end ; iter++ )
-        (*iter)->Print(std::string(""), tabs+1);
+      {
+        (*iter)->Dump(data, std::string(""), tabs+1);
+      }
     }
     break;
   case TAG_COMPOUND:
-    std::cout << "TAG_Compound(\"" << name << "\"):" << std::endl;
+    data += tabPrefix + "TAG_Compound(\"" + name + "\"):\n";
     if(m_value.compoundVal != NULL)
     {
       std::map<std::string, NBT_Value*>::iterator iter = m_value.compoundVal->begin(), end = m_value.compoundVal->end();
       for( ; iter != end; iter++)
-        iter->second->Print(iter->first, tabs+1);
+      {
+        iter->second->Dump(data, iter->first, tabs+1);
+      }
     }
     break;
   default:
-    std::cout << "Invalid TAG:" << m_type << std::endl;
+    data += tabPrefix + "Invalid TAG:" + dtos(m_type) + "\n";
   }
 }
-
