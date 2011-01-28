@@ -23,6 +23,7 @@ IF (MSVC_IDE)
 ENDIF (MSVC_IDE)
 
 set(mineserver_source
+  src/mob.cpp
   src/lighting.cpp
   src/logger.cpp
   src/furnace.cpp
@@ -38,7 +39,6 @@ set(mineserver_source
   src/nbt.cpp
   src/user.cpp
   src/config.cpp
-  src/cursesScreen.cpp
   src/config/lexer.cpp
   src/config/scanner.cpp
   src/config/parser.cpp
@@ -50,6 +50,7 @@ set(mineserver_source
   src/worldgen/heavengen.cpp
   src/worldgen/mapgen.cpp
   src/worldgen/nethergen.cpp
+  src/blocks/workbench.cpp
   src/blocks/cake.cpp
   src/blocks/stair.cpp
   src/blocks/chest.cpp
@@ -57,7 +58,9 @@ set(mineserver_source
   src/blocks/fire.cpp
   src/blocks/default.cpp
   src/blocks/plant.cpp
+  src/blocks/note.cpp
   src/blocks/sign.cpp
+  src/blocks/blockfurnace.cpp
   src/blocks/door.cpp
   src/blocks/ladder.cpp
   src/blocks/torch.cpp
